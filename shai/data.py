@@ -94,7 +94,8 @@ COMMON_SKILL_IDS = _gd.COMMON_SKILL_IDS
 SYSTEM_ACTION_IDS = _gd.SYSTEM_ACTION_IDS
 
 # 还没做的专属招：先不出现在按钮里。
-NOT_YET_IMPLEMENTED_SKILLS = {"t7", "t8"}  # 范仲淹换人、占卜
+# 不出现在招式按钮里的专属动作：范仲淹换人、占卜还没做；牛顿选场景改成了回合开始时的免费选择。
+NOT_YET_IMPLEMENTED_SKILLS = {"t7", "t8", "c_newton_scene"}
 
 
 def character_skill_ids(character_data: dict) -> tuple[str, ...]:

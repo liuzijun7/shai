@@ -29,6 +29,7 @@ from .data import (
 )
 from .model import Fighter, NeedDecision, Player, RuleError, Status
 from .rules import Rules
+from .turnstart import TurnStart
 
 SIDES = ("A", "B")
 DEFENSE_CODE = {"d1": 1, "d2": 2, "d3": 3, "d4": 4}
@@ -49,7 +50,7 @@ class _ProbeStop(Exception):
     """试算两种先后顺序时，算完这一回合就停。"""
 
 
-class Battle(Rules, Actions):
+class Battle(Rules, Actions, TurnStart):
     VERSION = "1.0-dev"
 
     def __init__(self, team_a: list[str], team_b: list[str], seed: int | None = None,
@@ -345,6 +346,7 @@ class Battle(Rules, Actions):
             if self.fighter(side).counters.get("personal_turns", 0) == 0:
                 self.skipping.discard(side)
                 self.choices.pop(side, None)
+        self.scene_phase()                      # 牛顿选场景、龙王移动对手、库巴的扔和跑
         if len(self.choices) == 2:              # 双方都不能出招：直接结算这一回合
             self._resolve_round()
 

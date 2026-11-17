@@ -138,6 +138,7 @@ class OrderAndZei(unittest.TestCase):
 
     def test_unblockable_signature_is_not_cancelled(self):
         b = Battle(["拳术宗师"], ["牛顿"], seed=1, true_body=False)
+        settle(b)                   # 牛顿回合开始先选场景，这里选“不动”
         b.fighter("B").shield = 0
         play(b, "3", "2", zei="A")  # 点穴手封物理；牛顿的麒麟芒星是物理，但牛顿的大招憋不回去
         self.assertLess(b.fighter("A").hp, 100000)
@@ -314,3 +315,49 @@ class ZeiMiniGame(unittest.TestCase):
         self.assertTrue(game.redo(True))
         self.assertEqual(game.throw({"A": "石头", "B": "布"}), "done")   # A 没有重贼，输了就是输了
         self.assertEqual(game.winner, "B")
+
+
+class TurnStartScenes(unittest.TestCase):
+    def test_newton_picks_his_scene_for_free(self):
+        b = Battle(["牛顿"], ["欧阳修"], seed=1, true_body=False)
+        self.assertEqual(b.pending["kind"], "choose")
+        self.assertEqual(b.pending["askers"], ["A"])
+        b.answer("宇宙")
+        self.assertEqual(b.fighter("A").scene, "宇宙")
+        self.assertIsNone(b.pending)
+        self.assertNotIn("c_newton_scene", legal(b, "A"))    # 不再是一个要占回合的招
+
+    def test_dragon_moves_the_opponent(self):
+        b = Battle(["龙王"], ["拳术宗师"], seed=1, true_body=False)
+        self.assertEqual(b.pending["askers"], ["A"])
+        b.answer("南极")
+        self.assertEqual(b.fighter("B").scene, "南极")
+
+    def test_dragon_against_newton_is_settled_by_zei(self):
+        for zei_winner, expected in (("A", "南极"), ("B", "宇宙")):
+            b = Battle(["龙王"], ["牛顿"], seed=1, true_body=False)
+            b.answer("南极")         # 龙王要把牛顿移到南极
+            b.answer("宇宙")         # 牛顿要自己去宇宙
+            self.assertEqual(b.pending["kind"], "zei")
+            b.answer(zei_winner)
+            self.assertEqual(b.fighter("B").scene, expected)
+
+    def test_kuba_throw_and_run_take_three_zei(self):
+        b = Battle(["库巴"], ["拳术宗师"], seed=1, true_body=False)
+        self.assertEqual(b.pending["askers"], ["B"])        # 先问对手要不要扔
+        b.answer("南极")
+        self.assertEqual(b.pending["askers"], ["A"])        # 再问库巴要不要跑
+        b.answer("外太空")
+        zeis = 0
+        while b.pending and b.pending["kind"] == "zei":
+            zeis += 1
+            b.answer("A")           # 库巴三次都赢：没被扔动，跑成了
+        self.assertEqual(zeis, 3)
+        self.assertEqual(b.fighter("A").scene, "外太空")
+
+    def test_kuba_nobody_wants_to_move_means_no_zei(self):
+        b = Battle(["库巴"], ["拳术宗师"], seed=1, true_body=False)
+        b.answer("")
+        b.answer("")
+        self.assertIsNone(b.pending)
+        self.assertEqual(b.fighter("A").scene, "地面")
