@@ -339,6 +339,10 @@ class Stage {
         if (ev.leveled) Sfx.heal();
         this.pop(ev.side, ev.leveled ? ev.name + " 升到 " + ev.level + " 级" : "学" + ev.name + " " + ev.progress, ev.leveled ? "heal" : "note");
         return this.wait(300);
+      case "build":
+        if (f) { f.devices = f.devices || {}; f.devices[ev.name] = ev.progress; }
+        this.pop(ev.side, ev.name + " " + ev.progress + "/" + ev.of, "note");
+        return this.wait(300);
       case "crit": this.pop(ev.side, "暴击", "hurt"); return this.wait(150);
       case "zei": Sfx.zei(); return;
       case "phase": return this.wait(200);

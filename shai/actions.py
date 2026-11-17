@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .data import SCENES, SELF_BUFFS
+from .data import ACCELERATOR_BIG, SCENES, SELF_BUFFS, accelerator_level
 from .model import Fighter, Status
 
 
@@ -57,6 +57,13 @@ class Actions:
             while actor.counters[key] >= 5:
                 actor.counters[key] -= 5
                 self.upgrade_all_inner(actor)
+            return
+        if effect == "build_accelerator":
+            built = min(ACCELERATOR_BIG["builds"], int(actor.devices.get("粒子加速器", 0)) + reps)
+            actor.devices["粒子加速器"] = built
+            self._emit("build", side=actor.side, name="粒子加速器", progress=built, of=ACCELERATOR_BIG["builds"])
+            self._log(f"{L(actor)}造粒子加速器，造了{built}下。"
+                      + ("已经可以打了。" if accelerator_level(built) else ""))
             return
         if effect == "panacea":
             actor.resources["万灵丹"] -= 1
@@ -223,6 +230,10 @@ class Actions:
             for name in list(target.inner):
                 target.inner[name] = max(0, target.inner[name] - 1)
             self._log(f"{L(target)}的全部内功下降一级。")
+        elif effect == "accelerator":
+            level = accelerator_level(int(actor.devices.get("粒子加速器", 0)))
+            if level:
+                self.add_radiation(target, int(level["radiation"]) * reps, actor.side, "粒子加速器")
         elif effect == "to_scene":
             self.set_scene(target, spec["scene"])
         elif effect == "foehn":

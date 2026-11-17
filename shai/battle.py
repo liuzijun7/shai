@@ -22,6 +22,7 @@ from math import inf
 from typing import Any
 
 from .actions import Actions
+from .data import ACCELERATOR_BIG, accelerator_level
 from .data import (
     CHARACTERS, CHARACTER_NAME_TO_ID, FIRST_STRIKE_IDS, LEARN_THRESHOLDS, SCENES, SEAL_BY_ATTRIBUTE,
     SELF_BUFFS, SKILLS,
@@ -130,7 +131,13 @@ class Battle(Rules, Actions, TurnStart, Forms):
         for action_id in ids:
             spec = _OXYGEN if action_id == "sys_collect_oxygen" else SKILLS[action_id]
             reason = blocked_all or self._illegal_reason(actor, target, spec)
-            result.append({**spec, "tier": self._tier(actor, spec), "legal": reason is None, "reason": reason or ""})
+            entry = {**spec, "tier": self._tier(actor, spec), "legal": reason is None, "reason": reason or ""}
+            if spec["effect"] in {"build_accelerator", "accelerator"}:
+                built = int(actor.devices.get("粒子加速器", 0))
+                entry["damage"] = self.character_damage(actor, spec)
+                entry["description"] = (f"已经造了 {built} 下。造满 10 下可以打：一下 3 万，加 3 次辐射。"
+                                        "造满 20 下：一下 5 万，加 5 次辐射，不管对手在哪个场景都打得到。")
+            result.append(entry)
         for name, needs in LEARN_THRESHOLDS.items():          # 学内功：占这个回合的出招
             reason = blocked_all or self.learn_reason(actor, name)
             progress = actor.learn_progress.get(name, 0)
@@ -692,6 +699,10 @@ class Battle(Rules, Actions, TurnStart, Forms):
             return "需要1超新星和5星体能量"
         if effect == "sunspot" and actor.resources["星体能量"] < 3:
             return "需要3星体能量"
+        if effect == "build_accelerator" and actor.devices.get("粒子加速器", 0) >= ACCELERATOR_BIG["builds"]:
+            return "粒子加速器已经造到头了"
+        if effect == "accelerator" and accelerator_level(int(actor.devices.get("粒子加速器", 0))) is None:
+            return "粒子加速器还没造好（要造 10 下）"
         if effect == "planet" and (actor.resources["超新星"] < 1 or actor.resources["星体能量"] < 3):
             return "需要1超新星和3星体能量"
         if effect == "panacea" and actor.resources["万灵丹"] < 1:
@@ -706,7 +717,8 @@ class Battle(Rules, Actions, TurnStart, Forms):
             return "没有酒"
         if effect in {"rise_self", "choose_scene"} and actor.has_status("万能胶"):
             return "万能胶使场景无法移动"
-        if spec["target"] == "enemy" and actor.distance != inf:
+        any_scene = effect == "accelerator" and actor.devices.get("粒子加速器", 0) >= ACCELERATOR_BIG["builds"]
+        if spec["target"] == "enemy" and actor.distance != inf and not any_scene:
             reach = float(actor.distance) + float(spec["distance"])
             gap = abs(actor.scene_height - target.scene_height)
             if gap > reach:
@@ -737,7 +749,7 @@ class Battle(Rules, Actions, TurnStart, Forms):
             "parasites": {n: {"count": p.count, "layer": p.layer} for n, p in f.parasites.items()},
             "resources": dict(f.resources), "radiation": f.radiation, "defeated": f.defeated,
             "used_shen": sorted(f.used_shen), "is_true_body": f.is_true_body, "entered": f.entered,
-            "learn_progress": dict(f.learn_progress),
+            "learn_progress": dict(f.learn_progress), "devices": dict(f.devices),
         }
 
     def _move_data(self, actor: Fighter, target: Fighter, spec: dict[str, Any]) -> dict[str, Any]:

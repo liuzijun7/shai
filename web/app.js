@@ -155,11 +155,12 @@ function benchHtml(side) {
   const active = p.team[p.active];
   const inner = Object.entries(active.inner || {}).filter(([, v]) => v > 0).map(([k, v]) => `<span class="chip">${esc(k)}${v}</span>`).join("");
   const items = Object.entries(active.resources || {}).filter(([, v]) => v > 0).map(([k, v]) => `<span class="chip">${esc(k)} ${v}</span>`).join("");
+  const devices = Object.entries(active.devices || {}).filter(([, v]) => v > 0).map(([k, v]) => `<span class="chip">${esc(k)} 造了 ${v} 下</span>`).join("");
   const seat = S.seats[side];
   return `<div class="row"><b>${side === me.side ? "你" : "对手"}（${esc(seat ? seat.name : "")}）</b>${S.view.chosen[side] && S.need !== "over" ? `<span class="chip on">已选招</span>` : ""}</div>
     <div class="chips"><span class="muted">场下：</span>${chips || `<span class="muted">没有</span>`}</div>
     <div class="chips"><span class="muted">内功：</span>${inner || `<span class="muted">没有</span>`}</div>
-    <div class="chips"><span class="muted">物品：</span>${items}</div>`;
+    <div class="chips"><span class="muted">物品：</span>${items}${devices}</div>`;
 }
 
 function promptHtml() {

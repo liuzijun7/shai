@@ -16,6 +16,7 @@ from .data import (
     ALL_INNER_NAMES, CHARACTERS, CONTROL_STATUSES, DAMAGE_STATUSES, FIRE_SKILL_NAMES, ICE_SKILL_NAMES,
     INNER_VALUES, LEARN_MULTIPLIER,
     LEARN_THRESHOLDS, MAX_INNER_LEVEL, MAX_LEARNED_INNER, SCENES, SELF_BUFFS, SURE_HIT_IDS, VERTICAL_SCENES,
+    accelerator_level,
 )
 from .model import Fighter, Parasite, RuleError, Status
 
@@ -82,6 +83,9 @@ class Rules:
 
     def character_damage(self, actor: Fighter, spec: dict[str, Any]) -> int:
         name = spec["name"]
+        if spec["effect"] == "accelerator":
+            level = accelerator_level(int(actor.devices.get("粒子加速器", 0)))
+            return int(level["damage"]) if level else 0
         if actor.name == "灵力圣使" and name == "圣六式空凌":
             return 90000
         if actor.name == "范仲淹" and name == "洪水":

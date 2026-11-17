@@ -56,6 +56,7 @@ class Fighter:
     is_true_body: bool = False
     entered: bool = False           # 是否上过场（首次登场的被动只触发一次）
     learn_progress: dict[str, int] = field(default_factory=dict)   # 每种内功学了多少下
+    devices: dict[str, int] = field(default_factory=dict)          # 造的装置：名字 -> 造了多少下
 
     @property
     def scene_height(self) -> int:

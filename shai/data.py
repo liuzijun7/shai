@@ -170,8 +170,28 @@ SELECTABLE_NAMES = tuple(
 
 CHARACTER_NAME_TO_ID = {c["name"]: key for key, c in CHARACTERS.items()}
 
+# ---------- 粒子加速器（本子 ⑩） ----------
+# 造 10 下可以打：一下 3 万加 3 次辐射。再造 10 下：一下 5 万加 5 次辐射，不限场景。
+# 雨晨：造一下占一个回合；“冷 1”在无限模式下不算。
+ACCELERATOR_SMALL = {"builds": 10, "damage": 30000, "radiation": 3}
+ACCELERATOR_BIG = {"builds": 20, "damage": 50000, "radiation": 5}
+SKILLS["sys_build_accelerator"] = _gd.skill(
+    "sys_build_accelerator", "造粒子加速器", target="self", effect="build_accelerator", action_kind="build")
+SKILLS["sys_fire_accelerator"] = _gd.skill(
+    "sys_fire_accelerator", "粒子加速器", damage=ACCELERATOR_SMALL["damage"], effect="accelerator")
+
+
+def accelerator_level(builds: int) -> dict | None:
+    """造了这么多下的粒子加速器现在是哪一档；还没造好返回 None。"""
+    if builds >= ACCELERATOR_BIG["builds"]:
+        return ACCELERATOR_BIG
+    if builds >= ACCELERATOR_SMALL["builds"]:
+        return ACCELERATOR_SMALL
+    return None
+
+
 COMMON_SKILL_IDS = _gd.COMMON_SKILL_IDS
-SYSTEM_ACTION_IDS = _gd.SYSTEM_ACTION_IDS
+SYSTEM_ACTION_IDS = _gd.SYSTEM_ACTION_IDS + ("sys_build_accelerator", "sys_fire_accelerator")
 
 # 不出现在招式按钮里的专属动作：占卜和牛顿选场景都改成了回合开始时的免费选择。
 NOT_YET_IMPLEMENTED_SKILLS = {"t8", "c_newton_scene"}
