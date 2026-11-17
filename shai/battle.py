@@ -215,6 +215,8 @@ class Battle(Rules, Actions):
         except _ProbeStop:
             return "probe", None, self._fingerprint()
         except NeedDecision as need:
+            # 停下来之前这一段已经发生了什么：给玩家看，让他知道在为什么而贼
+            need.request["so_far"] = [e["text"] for e in self.events[self._snap["events"]:] if e["t"] == "log"]
             self._restore(self._snap)
             return "need", need.request, None
         finally:

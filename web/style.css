@@ -1,0 +1,68 @@
+/* 第二步的界面：能用就行，没有动画。第三步会重做对战画面。 */
+:root {
+  --paper: #f3f5f1; --sheet: #ffffff; --ink: #1b2333; --muted: #586174; --rule: #cdd5dc;
+  --pen: #2346b0; --pen-soft: #e3e9fa; --hl: #ffe14d; --red: #b93226; --ok: #1c7447;
+  --hp: #2e9d5b; --shield: #4b7bd8;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.6 "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif; }
+main { max-width: 1120px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
+h1 { font-size: 1.6rem; margin: 0; }
+h2 { font-size: 1.05rem; margin: 0; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; background: var(--sheet); border: 1.5px solid var(--rule); border-radius: 6px; padding: 6px 12px; }
+button:hover:not(:disabled) { border-color: var(--pen); }
+button:disabled { cursor: not-allowed; opacity: .45; }
+button.primary { background: var(--pen); border-color: var(--pen); color: #fff; font-weight: 650; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--pen); outline-offset: 2px; }
+input[type="text"], select { background: var(--sheet); border: 1.5px solid var(--rule); border-radius: 6px; padding: 6px 10px; }
+.muted { color: var(--muted); }
+.row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.panel { background: var(--sheet); border: 1px solid var(--rule); border-radius: 8px; padding: 12px 14px; display: grid; gap: 10px; }
+#toast { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 9; background: var(--red); color: #fff; padding: 8px 16px; border-radius: 6px; }
+
+/* 进房间 */
+.join { max-width: 420px; margin: 8vh auto 0; }
+.join label { display: grid; gap: 4px; }
+
+/* 选人 */
+.code { font: 700 1.5rem ui-monospace, Consolas, monospace; letter-spacing: .15em; background: var(--hl); padding: 0 10px; border-radius: 4px; }
+.seat { border: 1px solid var(--rule); border-radius: 6px; padding: 4px 10px; }
+.seat.ready { border-color: var(--ok); color: var(--ok); }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.card { text-align: left; display: grid; gap: 2px; padding: 8px 10px; }
+.card b { font-size: 1.05rem; }
+.card small { color: var(--muted); line-height: 1.4; }
+.card[aria-pressed="true"] { background: var(--pen-soft); border-color: var(--pen); }
+
+/* 对战 */
+.top { justify-content: space-between; }
+.sides { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.side h2 span { font-weight: 400; color: var(--muted); }
+.fighter { display: grid; gap: 4px; }
+.fighter .name { font-size: 1.2rem; font-weight: 700; }
+.bar { height: 14px; background: var(--rule); border-radius: 7px; overflow: hidden; position: relative; }
+.bar i { display: block; height: 100%; background: var(--hp); }
+.bar.shield i { background: var(--shield); }
+.bar span { position: absolute; inset: 0; text-align: center; font: 11px/14px ui-monospace, Consolas, monospace; color: #fff; text-shadow: 0 0 2px #000; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { font-size: .8rem; border: 1px solid var(--rule); border-radius: 999px; padding: 0 8px; background: var(--paper); }
+.chip.bad { border-color: var(--red); color: var(--red); }
+.chip.good { border-color: var(--ok); color: var(--ok); }
+.chip.out { text-decoration: line-through; opacity: .5; }
+.chip.on { background: var(--hl); border-color: transparent; }
+.prompt { border: 2px solid var(--pen); }
+.prompt.wait { border-color: var(--rule); }
+.prompt ul { margin: 0; padding-left: 1.2em; color: var(--muted); font-size: .9rem; }
+.hands button { font-size: 1.1rem; padding: 10px 22px; }
+.tabs button[aria-pressed="true"] { background: var(--ink); color: var(--sheet); border-color: var(--ink); }
+.actions { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
+.action { text-align: left; display: grid; gap: 0; padding: 6px 9px; line-height: 1.35; }
+.action small { color: var(--muted); font-size: .75rem; }
+.log { height: 280px; overflow-y: auto; font-size: .9rem; background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; padding: 8px 10px; }
+.log p { margin: 0; }
+.log p.round { margin-top: 8px; font-weight: 700; }
+.log p.zei { color: var(--pen); }
+.over { font-size: 1.3rem; font-weight: 700; }
+@media (max-width: 720px) { .sides { grid-template-columns: 1fr; } }
