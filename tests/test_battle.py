@@ -290,3 +290,27 @@ class Scenes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ZeiMiniGame(unittest.TestCase):
+    def test_decisive_draw_repeats_then_winner(self):
+        from shai.zei import ZeiGame
+        game = ZeiGame({"sides": ["A", "B"], "mode": "decisive", "rezei": {"A": 0, "B": 0}})
+        self.assertEqual(game.throw({"A": "石头", "B": "石头"}), "again")
+        self.assertEqual(game.throw({"A": "石头", "B": "剪刀"}), "done")
+        self.assertEqual(game.winner, "A")
+
+    def test_single_draw_ends_with_no_winner(self):
+        from shai.zei import ZeiGame
+        game = ZeiGame({"sides": ["A", "B"], "mode": "single", "rezei": {}})
+        self.assertEqual(game.throw({"A": "布", "B": "布"}), "done")
+        self.assertIsNone(game.winner)
+
+    def test_loser_with_rezei_may_throw_again(self):
+        from shai.zei import ZeiGame
+        game = ZeiGame({"sides": ["A", "B"], "mode": "decisive", "rezei": {"A": 0, "B": 1}})
+        self.assertEqual(game.throw({"A": "石头", "B": "剪刀"}), "redo?")
+        self.assertEqual(game.redo_side, "B")
+        self.assertTrue(game.redo(True))
+        self.assertEqual(game.throw({"A": "石头", "B": "布"}), "done")   # A 没有重贼，输了就是输了
+        self.assertEqual(game.winner, "B")

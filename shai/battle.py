@@ -482,6 +482,13 @@ class Battle(Rules, Actions):
             self.add_radiation(foe, 5, fighter.side, "首次出场X光")
 
     def _replace_fallen(self) -> None:
+        # 新上场的人物可能一登场就打死对面（比如首次出场的 X 光），所以要反复检查到没人倒下为止。
+        for _ in range(2 * max(len(p.team) for p in self.players.values()) + 2):
+            if not any(p.fighter.defeated and p.alive_any() for p in self.players.values()):
+                return
+            self._replace_fallen_once()
+
+    def _replace_fallen_once(self) -> None:
         for side in SIDES:
             player = self.players[side]
             if not player.fighter.defeated:
