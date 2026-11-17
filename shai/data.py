@@ -64,7 +64,10 @@ SKILLS["c_swap_hp"] = _gd.skill(
 FIRST_STRIKE_IDS = {"21", "23", "24"}  # 雷神之怒、太阳黑子爆、伽马射线
 
 # 出手顺序的档位，数字大的先出手。
-TIER_NORMAL, TIER_FIRST, TIER_SHEN, TIER_LINGBO4, TIER_SWITCH = 0, 20, 30, 40, 60
+TIER_NORMAL, TIER_FIRST, TIER_SHEN, TIER_LINGBO4, TIER_SWITCH, TIER_FAN_SWAP = 0, 20, 30, 40, 60, 70
+
+# 范仲淹的换人（雨晨）：和对面场上的人物互换，对面那个人物连同内功和所有属性都归你，范仲淹归对面。
+SKILLS["t7"]["description"] = "和对面场上的人物互换：那个人物连同内功、体力、状态都归你，范仲淹归对面。比普通换人还先生效。"
 
 # ---------- 人物 ----------
 
@@ -126,9 +129,8 @@ CHARACTER_NAME_TO_ID = {c["name"]: key for key, c in CHARACTERS.items()}
 COMMON_SKILL_IDS = _gd.COMMON_SKILL_IDS
 SYSTEM_ACTION_IDS = _gd.SYSTEM_ACTION_IDS
 
-# 还没做的专属招：先不出现在按钮里。
-# 不出现在招式按钮里的专属动作：范仲淹换人、占卜还没做；牛顿选场景改成了回合开始时的免费选择。
-NOT_YET_IMPLEMENTED_SKILLS = {"t7", "t8", "c_newton_scene"}
+# 不出现在招式按钮里的专属动作：占卜和牛顿选场景都改成了回合开始时的免费选择。
+NOT_YET_IMPLEMENTED_SKILLS = {"t8", "c_newton_scene"}
 
 
 def character_skill_ids(character_data: dict) -> tuple[str, ...]:

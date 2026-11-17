@@ -25,7 +25,8 @@ from .actions import Actions
 from .data import (
     CHARACTERS, CHARACTER_NAME_TO_ID, FIRST_STRIKE_IDS, LEARN_THRESHOLDS, SCENES, SEAL_BY_ATTRIBUTE,
     SELF_BUFFS, SKILLS,
-    TIER_FIRST, TIER_LINGBO4, TIER_NORMAL, TIER_SHEN, TIER_SWITCH, TRUE_BODY_ID, UNBLOCKABLE_CHARACTERS,
+    TIER_FAN_SWAP, TIER_FIRST, TIER_LINGBO4, TIER_NORMAL, TIER_SHEN, TIER_SWITCH, TRUE_BODY_ID,
+    UNBLOCKABLE_CHARACTERS,
     character_skill_ids, is_signature,
 )
 from .model import Fighter, NeedDecision, Player, RuleError, Status
@@ -423,7 +424,11 @@ class Battle(Rules, Actions, TurnStart, Forms):
         # A、B 各用一条独立的随机数流：谁先出手不会改变另一方的随机结果。
         streams = {side: random.Random(self._main_rng.getrandbits(64)) for side in SIDES}
 
-        # 1. 换人最先生效
+        # 1. 范仲淹的换人最先生效，然后是普通换人
+        void: dict[str, str] = {}               # 人物被换走以后，原来选的招出不了的一方
+        for side in SIDES:
+            if specs[side]["effect"] == "swap_character" and side not in void:
+                self._fan_swap(side, specs, entries, void)
         for side in SIDES:
             if specs[side]["action_kind"] == "switch":
                 self._switch(side, specs[side]["switch_to"], voluntary=True)
@@ -453,7 +458,8 @@ class Battle(Rules, Actions, TurnStart, Forms):
 
         # 4. 出手顺序：档位高的先；同一档先后有区别就贼
         acting = [side for side in SIDES
-                  if specs[side]["action_kind"] not in {"defense", "skip", "switch"} and side not in cancelled]
+                  if specs[side]["action_kind"] not in {"defense", "skip", "switch"} and side not in cancelled
+                  and specs[side]["effect"] != "swap_character"]
         order = acting
         if len(acting) == 2:
             tiers = [self._tier(self.fighter(side), specs[side]) for side in acting]
@@ -470,6 +476,10 @@ class Battle(Rules, Actions, TurnStart, Forms):
             actor, target, spec = self.fighter(side), self.fighter(self.other(side)), specs[side]
             if actor.defeated:
                 self._log(f"{self.label(actor)}已经倒下，行动取消。")
+                continue
+            if side in void:
+                self._emit("cancel", side=side, skill=spec["name"], why="人物被换走")
+                self._log(f"{side}场上的人物被换成了{actor.name}，原来选的【{spec['name']}】出不了：{void[side]}。")
                 continue
             if actor.lives_remaining < entries[side]["lives"]:
                 self._emit("cancel", side=side, skill=spec["name"], why="失去当前命")
@@ -535,6 +545,42 @@ class Battle(Rules, Actions, TurnStart, Forms):
         self._log(f"{side}换上{new.name}。" if voluntary else f"{side}的{old.name}倒下，{new.name}上场。")
         self._on_enter(new)
 
+    def _fan_swap(self, side: str, specs: dict[str, Any], entries: dict[str, Any], void: dict[str, str]) -> None:
+        """范仲淹的换人：他和对面场上的人物互换，两个人物带着自己的一切（内功、体力、状态、场景）换边。
+
+        对面这回合原来选的招，改由换过去的范仲淹来出；范仲淹出不了的（比如那个人物的专属招）就作废。
+        """
+        other = self.other(side)
+        mine, theirs, spec = self.fighter(side), self.fighter(other), specs[side]
+        self._emit("move", **self._move_data(mine, theirs, spec))
+        if DEFENSE_CODE.get(specs[other]["id"]) == spec["defense"]:
+            self._emit("block", side=other, attacker=side, by=specs[other]["name"], skill=spec["name"])
+            self._log(f"{self.label(theirs)}使用【{specs[other]['name']}】，防住了{self.label(mine)}的【换人】。")
+            return
+        if theirs.is_true_body or theirs.defeated:
+            self._log(f"{self.label(mine)}的【换人】没有可以换的对象。")
+            return
+        a, b = self.players[side], self.players[other]
+        a.team[a.active], b.team[b.active] = theirs, mine
+        for fighter in (mine, theirs):
+            fighter.side = self.other(fighter.side)
+            for status in fighter.statuses.values():        # 状态和虫子是谁加的，也跟着换边
+                if status.source in SIDES:
+                    status.source = self.other(status.source)
+            for parasite in fighter.parasites.values():
+                parasite.source = self.other(parasite.source)
+            for item in fighter.counters.get("delayed_effects", []):
+                if item.get("source") in SIDES:
+                    item["source"] = self.other(item["source"])
+        self._emit("swap_fighters", side=side, fighters={s: self._fighter_view(self.fighter(s)) for s in SIDES})
+        self._log(f"{side}的{mine.name}使用【换人】：{theirs.name}归{side}，{mine.name}归{other}。")
+        for s in SIDES:
+            entries[s]["lives"] = self.fighter(s).lives_remaining
+        if specs[other]["action_kind"] not in {"defense", "skip", "switch"}:
+            reason = self._illegal_reason(self.fighter(other), self.fighter(side), specs[other])
+            if reason:
+                void[other] = reason
+
     def _on_enter(self, fighter: Fighter) -> None:
         if fighter.entered:
             return
@@ -589,6 +635,8 @@ class Battle(Rules, Actions, TurnStart, Forms):
     # ================= 能不能出这个招 =================
 
     def _tier(self, fighter: Fighter, spec: dict[str, Any]) -> int:
+        if spec["effect"] == "swap_character":
+            return TIER_FAN_SWAP
         if spec["action_kind"] == "switch":
             return TIER_SWITCH
         if spec["action_kind"] in {"defense", "skip"}:
@@ -621,8 +669,10 @@ class Battle(Rules, Actions, TurnStart, Forms):
             return "人物已经倒下"
         if spec["id"] == "25":
             return "臭伽马只能由伽马射线触发"
-        if spec.get("character") and spec["character"] != actor.name:
+        if spec.get("character") and spec["id"] not in self.char(actor)["skills"]:
             return "不是这个人物的专属招"
+        if spec["effect"] == "swap_character" and target.is_true_body:
+            return "不能和超级真身互换"
         if actor.name == "武圣":
             first_life = actor.lives_remaining == actor.lives_total
             if spec["id"] in {"t2", "t3"} and first_life:

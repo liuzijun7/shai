@@ -14,7 +14,7 @@ const SIGNATURE_ANIMS = {};
 function animOf(ev) {
   if (SIGNATURE_ANIMS[ev.id]) return SIGNATURE_ANIMS[ev.id];
   const a = ev.attributes || [];
-  if (["switch", "defense", "skip"].includes(ev.action_kind)) return "none";
+  if (["switch", "defense", "skip"].includes(ev.action_kind) || ev.effect === "swap_character") return "none";
   if (["collect", "build", "scene", "learn"].includes(ev.action_kind)) return "collect";
   if (ev.target === ev.side) return "self";
   if (BEAM_EFFECTS.includes(ev.effect)) return "beam";
@@ -244,6 +244,20 @@ class Stage {
         this.hud(ev.side); this.sprite(ev.side); this.gauge();
         await this.anim(sprite, [{ transform: `translateX(${-70 * d}px)`, opacity: 0 }, { transform: "translateX(0)", opacity: 1 }], 260);
         return this.wait(150);
+      }
+      case "swap_fighters": {           // 范仲淹的换人：两边场上的人物互换
+        const sprites = ["A", "B"].map((side) => [this.box(side).querySelector(".sprite"), this.dir(side)]);
+        await Promise.all(sprites.map(([el, d]) =>
+          this.anim(el, [{ transform: "translateX(0)", opacity: 1 }, { transform: `translateX(${90 * d}px)`, opacity: 0 }], 280, "ease-in")));
+        for (const side of ["A", "B"]) {
+          this.model[side] = JSON.parse(JSON.stringify(ev.fighters[side]));
+          this.hud(side); this.sprite(side);
+        }
+        this.gauge();
+        await Promise.all(sprites.map(([el, d]) =>
+          this.anim(el, [{ transform: `translateX(${90 * d}px)`, opacity: 0 }, { transform: "translateX(0)", opacity: 1 }], 300)));
+        this.pop(ev.side, "换人", "note");
+        return this.wait(250);
       }
       case "move":
         this.say(ev.side, ev.name, ATTR_COLOR[(ev.attributes || [])[0]]);

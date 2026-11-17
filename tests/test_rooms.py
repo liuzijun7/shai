@@ -114,5 +114,21 @@ class RoomTests(unittest.TestCase):
             self.assertEqual(room.phase, "lobby")
 
 
+    def test_fan_swap_reaches_both_screens(self):
+        room = two_player_room(["范仲淹"], ["拳术宗师"], zei=False)
+        room.state_for("A")
+        room.state_for("B")
+        room.handle("A", {"t": "choose", "action": "t7"})
+        room.handle("B", {"t": "choose", "action": "d2"})
+        for side in ("A", "B"):
+            state = room.state_for(side)
+            self.assertEqual(state["view"]["players"]["A"]["team"][0]["name"], "拳术宗师")
+            self.assertEqual(state["view"]["players"]["B"]["team"][0]["name"], "范仲淹")
+            swap = [e for e in state["events"] if e["t"] == "swap_fighters"][0]
+            self.assertEqual(swap["fighters"]["A"]["name"], "拳术宗师")
+        actions = {a["id"] for a in room.state_for("B")["actions"]}
+        self.assertIn("t7", actions)                       # 范仲淹到了乙这边，换人这个招也跟着过去
+
+
 if __name__ == "__main__":
     unittest.main()
