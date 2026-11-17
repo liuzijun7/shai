@@ -79,8 +79,7 @@ class RoomTests(unittest.TestCase):
         room = Room("1", rng=random.Random(1))
         room.join("甲")
         room.join("乙")
-        with self.assertRaises(RoomError):
-            room.join("丙")
+        self.assertTrue(room.join("丙")[0].startswith("w:"))      # 两个座位都有人：第三个人自动观战
         with self.assertRaises(RoomError):
             room.handle("B", {"t": "config", "team_size": 2})
         with self.assertRaises(RoomError):

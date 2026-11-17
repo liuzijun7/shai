@@ -1,15 +1,18 @@
-"""房间：进房、选人、选招、贼、电脑对手，以及“每个人能看到什么”。
+"""房间：进房、选人、选招、贼、电脑对手、限时、聊天、观战，以及“每个人能看到什么”。
 
-这一层不碰网络。每个方法改完状态就结束；外面的 WebSocket 层负责把
-``state_for(side)`` 的结果发给对应的人。这样房间逻辑可以直接测试。
+这一层不碰网络，也不碰文件。每个方法改完状态就结束；外面的 WebSocket 层负责把
+``state_for(身份)`` 的结果发给对应的人，并把打完的对局存成文件。这样房间逻辑可以直接测试。
+
+“身份”是一个字符串：两位玩家是 ``"A"`` 和 ``"B"``，观战的人是 ``"w:"`` 加他的令牌。
 """
 
 from __future__ import annotations
 
 import random
 import secrets
+import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from shai import Battle, RuleError
 from shai.data import CHARACTERS, CHARACTER_NAME_TO_ID, SCENES, SELECTABLE_NAMES
@@ -17,6 +20,19 @@ from shai.zei import HANDS, ZeiGame
 
 SIDES = ("A", "B")
 MAX_TEAM = 6
+MAX_WATCHERS = 20
+
+# 限时（雨晨：按默认）。选招 60 秒，超时算普通攻击；贼 15 秒，超时由电脑随机出。
+CHOOSE_SECONDS = 60
+ZEI_SECONDS = 15
+# 轮到一个人之前，他的网页要先把刚发生的事播成动画。每条事件多给一点时间，封顶 20 秒。
+ANIMATION_SECONDS_PER_EVENT = 0.4
+ANIMATION_GRACE_MAX = 20
+
+CHAT_KEEP = 200          # 房间里最多留这么多条聊天
+CHAT_SEND = 60           # 每次发给网页最近的这么多条
+CHAT_MAX_LENGTH = 200    # 一条聊天最多这么多字
+CHAT_GAP_SECONDS = 0.5   # 同一个人两条聊天至少隔这么久
 
 
 class RoomError(Exception):
@@ -35,34 +51,71 @@ class Seat:
 
 
 @dataclass
+class Watcher:
+    name: str
+    token: str
+    events_sent: int = 0
+
+
+def is_watcher(key: str) -> bool:
+    return key.startswith("w:")
+
+
+@dataclass
 class Room:
     code: str
     rng: random.Random = field(default_factory=random.Random)
+    clock: Callable[[], float] = time.monotonic     # 算限时用；测试里换成假的钟
+    wall: Callable[[], float] = time.time           # 记“这一局是什么时候打完的”
     seats: dict[str, Seat | None] = field(default_factory=lambda: {"A": None, "B": None})
+    watchers: dict[str, Watcher] = field(default_factory=dict)      # 令牌 -> 观战的人
     team_size: int = 3
     zei_enabled: bool = True
+    timers_enabled: bool = True
     battle: Battle | None = None
     zei: ZeiGame | None = None
     throws: dict[str, str] = field(default_factory=dict)
     last_zei: dict[str, Any] | None = None
+    chat: list[dict[str, Any]] = field(default_factory=list)
+    chat_count: int = 0
+    deadlines: dict[str, dict[str, Any]] = field(default_factory=dict)   # 哪一方 -> 这一次要在什么时候之前做完
+    finished: dict[str, Any] | None = None          # 刚打完的这一局的完整记录，等外面存成文件
+    replay_id: str | None = None                    # 存好以后的回放编号
+    _seed: int = 0
+    _start_view: dict[str, Any] | None = None
+    _events_seen: dict[str, int] = field(default_factory=dict)
+    _chat_at: dict[str, float] = field(default_factory=dict)
 
     # ---------- 进房 ----------
 
-    def join(self, name: str, token: str | None = None) -> tuple[str, str]:
+    def join(self, name: str, token: str | None = None, watch: bool = False) -> tuple[str, str]:
+        """返回（身份，令牌）。两个座位都有人、或者对战已经开始时，新来的人自动成为观战。"""
         name = (name or "").strip()[:12] or "无名"
         for side in SIDES:                              # 断线重连：凭令牌坐回原位
             seat = self.seats[side]
             if seat and token and seat.token == token:
                 seat.connected, seat.events_sent = True, 0
+                self.deadlines.pop(side, None)          # 回来的人重新计时
                 return side, seat.token
-        for side in SIDES:
-            if self.seats[side] is None:
-                self.seats[side] = Seat(name=name, token=secrets.token_hex(8))
-                return side, self.seats[side].token
-        raise RoomError("房间已经满了。")
+        if token and token in self.watchers:
+            self.watchers[token].events_sent = 0
+            return "w:" + token, token
+        if not watch and self.phase == "lobby":
+            for side in SIDES:
+                if self.seats[side] is None:
+                    self.seats[side] = Seat(name=name, token=secrets.token_hex(8))
+                    return side, self.seats[side].token
+        if len(self.watchers) >= MAX_WATCHERS:
+            raise RoomError("观战的人太多了。")
+        token = secrets.token_hex(8)
+        self.watchers[token] = Watcher(name=name, token=token)
+        return "w:" + token, token
 
-    def leave(self, side: str) -> None:
-        seat = self.seats.get(side)
+    def leave(self, key: str) -> None:
+        if is_watcher(key):
+            self.watchers.pop(key[2:], None)
+            return
+        seat = self.seats.get(key)
         if seat:
             seat.connected = False
 
@@ -72,15 +125,24 @@ class Room:
             return "lobby"
         return "over" if self.battle.done else "battle"
 
+    def _name(self, key: str) -> str:
+        if is_watcher(key):
+            watcher = self.watchers.get(key[2:])
+            return watcher.name if watcher else "观战"
+        seat = self.seats.get(key)
+        return seat.name if seat else key
+
     # ---------- 处理玩家发来的消息 ----------
 
-    def handle(self, side: str, message: dict[str, Any]) -> None:
+    def handle(self, key: str, message: dict[str, Any]) -> None:
         kind = message.get("t")
         handler = getattr(self, f"_on_{kind}", None)
         if handler is None:
             raise RoomError("不认识的请求。")
+        if is_watcher(key) and kind != "chat":
+            raise RoomError("你在观战，不能操作。")
         try:
-            handler(side, message)
+            handler(key, message)
         except RuleError as error:
             raise RoomError(str(error)) from None
         self.drive()
@@ -100,6 +162,8 @@ class Room:
                         seat.team = None
         if "zei" in m:
             self.zei_enabled = bool(m["zei"])
+        if "timers" in m:
+            self.timers_enabled = bool(m["timers"])
         self._refresh_bot_team()
 
     def _on_bot(self, side: str, m: dict[str, Any]) -> None:
@@ -165,10 +229,29 @@ class Room:
         if self.phase != "over":
             raise RoomError("这一局还没打完。")
         self.battle, self.zei, self.throws, self.last_zei = None, None, {}, None
+        self.finished, self.replay_id, self.deadlines, self._events_seen = None, None, {}, {}
         for seat in self.seats.values():
             if seat:
                 seat.team, seat.events_sent = None, 0
+        for watcher in self.watchers.values():
+            watcher.events_sent = 0
         self._refresh_bot_team()
+
+    def _on_chat(self, key: str, m: dict[str, Any]) -> None:
+        text = " ".join(str(m.get("text") or "").split())[:CHAT_MAX_LENGTH]
+        if not text:
+            return
+        now = self.clock()
+        if now - self._chat_at.get(key, -1e9) < CHAT_GAP_SECONDS:
+            raise RoomError("发得太快了，等一下再发。")
+        self._chat_at[key] = now
+        self._say("w" if is_watcher(key) else key, self._name(key), text)
+
+    def _say(self, who: str, name: str, text: str) -> None:
+        """往聊天里加一条。who 是 "A"、"B"、"w"（观战的人）或 "sys"（系统提示）。"""
+        self.chat.append({"n": self.chat_count, "who": who, "name": name, "text": text})
+        self.chat_count += 1
+        del self.chat[:-CHAT_KEEP]
 
     def _lobby_only(self) -> None:
         if self.phase != "lobby":
@@ -189,11 +272,17 @@ class Room:
         if self.phase == "lobby":
             a, b = self.seats["A"], self.seats["B"]
             if a and b and a.team and b.team:
-                self.battle = Battle(a.team, b.team, seed=self.rng.getrandbits(48), zei=self.zei_enabled)
+                self._seed = self.rng.getrandbits(48)
+                self.battle = Battle(a.team, b.team, seed=self._seed, zei=self.zei_enabled)
                 self.zei, self.throws, self.last_zei = None, {}, None
+                self.finished, self.replay_id, self.deadlines, self._events_seen = None, None, {}, {}
+                self._start_view = self._plain_view()
         for _ in range(10000):
             if self.phase != "battle" or not self._step():
-                return
+                break
+        self._refresh_deadlines()
+        if self.phase == "over" and self.finished is None:
+            self.finished = self.replay_record()
 
     def _step(self) -> bool:
         """让电脑做一件事。返回 False 表示现在在等真人。"""
@@ -246,43 +335,161 @@ class Room:
         self.last_zei = {"reason": self.battle.pending["reason"], "rounds": game.rounds, "winner": game.winner}
         self.battle.answer(game.winner)
 
+    # ---------- 限时 ----------
+
+    def _prompt_key(self, side: str) -> tuple[str, str] | None:
+        """这个人现在要做什么。返回（哪一类，区分“这一次”的记号）；不用他做事就返回 None。"""
+        seat = self.seats[side]
+        if self.phase != "battle" or seat is None or seat.is_bot:
+            return None
+        battle = self.battle
+        need, _ = self._need(side, battle.pending)
+        step, rounds = len(battle.history), len(self.zei.rounds) if self.zei else 0
+        if need == "choose":
+            return "choose", f"{battle.round}"
+        if need == "pick":
+            return "pick", f"{step}"
+        if need == "throw":
+            return "throw", f"{step}-{rounds}"
+        if need == "redo":
+            return "redo", f"{step}-{rounds}"
+        return None
+
+    def _refresh_deadlines(self) -> None:
+        """有人新轮到要做事，就给他开始计时；已经在计时的不重新算。"""
+        if self.phase != "battle" or not self.timers_enabled:
+            self.deadlines = {}
+            return
+        now, events = self.clock(), self.battle.events
+        for side in SIDES:
+            key = self._prompt_key(side)
+            if key is None:
+                self.deadlines.pop(side, None)
+                continue
+            current = self.deadlines.get(side)
+            if current and current["key"] == key:
+                continue
+            limit = CHOOSE_SECONDS if key[0] in {"choose", "pick"} else ZEI_SECONDS
+            fresh = sum(1 for event in events[self._events_seen.get(side, 0):] if event["t"] != "log")
+            self._events_seen[side] = len(events)
+            grace = min(ANIMATION_GRACE_MAX, ANIMATION_SECONDS_PER_EVENT * fresh)
+            self.deadlines[side] = {"key": key, "at": now + limit + grace, "limit": limit}
+
+    def tick(self) -> bool:
+        """外面每秒叫一次。有人超时就替他做默认的事。局面有变化返回 True。"""
+        if self.phase != "battle" or not self.timers_enabled:
+            return False
+        if not any(seat and not seat.is_bot and seat.connected for seat in self.seats.values()):
+            return False                                # 真人都不在：不替人出招，等有人回来
+        now, changed = self.clock(), False
+        for side in SIDES:
+            entry = self.deadlines.get(side)
+            if entry is None or now < entry["at"] or self._prompt_key(side) != entry["key"]:
+                continue
+            self._time_out(side, entry["key"][0])
+            self.deadlines.pop(side, None)
+            changed = True
+        if changed:
+            self.drive()
+        return changed
+
+    def _time_out(self, side: str, kind: str) -> None:
+        name, battle = self.seats[side].name, self.battle
+        if kind == "choose":            # 选招超时算普通攻击；普通攻击也出不了（比如够不着）就算防御 1
+            legal = {a["id"]: a for a in battle.legal_actions(side) if a["legal"] and a["effect"] != "choose_scene"}
+            action = legal.get("0") or legal.get("d1") or next(iter(legal.values()))
+            battle.choose(side, action["id"])
+            self._say("sys", "", f"{name}选招超时，按【{action['name']}】算。")
+        elif kind == "pick":
+            option = battle.pending["options"][0]
+            battle.answer(option["id"])
+            self._say("sys", "", f"{name}超时，按“{option['name']}”算。")
+        elif kind == "throw":
+            self.throws[side] = self.rng.choice(HANDS)
+            self._say("sys", "", f"{name}出拳超时，电脑替他出。")
+            self._settle_throws()
+        elif kind == "redo":
+            self._say("sys", "", f"{name}超时，不重贼。")
+            if not self.zei.redo(False):
+                self._finish_zei()
+
+    def _timers_view(self) -> dict[str, float | None]:
+        now = self.clock()
+        return {side: round(max(0.0, self.deadlines[side]["at"] - now), 1) if side in self.deadlines else None
+                for side in SIDES}
+
+    # ---------- 战报和回放 ----------
+
+    def _plain_view(self) -> dict[str, Any]:
+        view = self.battle.view()
+        view.pop("pending")
+        view.pop("waiting_for")
+        return view
+
+    def replay_record(self) -> dict[str, Any]:
+        """这一局的完整记录：开局设置、每一步输入、发生的全部事件。保存、回放都用它。"""
+        battle = self.battle
+        return {
+            "format": 1, "engine_version": battle.VERSION, "room": self.code, "ended_at": self.wall(),
+            "names": {side: self.seats[side].name for side in SIDES},
+            "bots": {side: self.seats[side].is_bot for side in SIDES},
+            "teams": {side: list(self.seats[side].team or []) for side in SIDES},
+            "seed": self._seed, "zei": self.zei_enabled,
+            "history": list(battle.history),            # 双方每一步的选择和每次贼的结果：照着重打一遍，结果一模一样
+            "events": list(battle.events),              # 发生的全部事件：网页照着播就是回放
+            "start_view": self._start_view, "final_view": self._plain_view(),
+            "winner": battle.winner, "rounds": battle.round,
+        }
+
     # ---------- 每个人能看到什么 ----------
 
-    def state_for(self, side: str) -> dict[str, Any]:
-        seat = self.seats[side]
+    def state_for(self, key: str) -> dict[str, Any]:
+        watcher = self.watchers.get(key[2:]) if is_watcher(key) else None
+        seat = None if watcher else self.seats[key]
         state: dict[str, Any] = {
-            "t": "state", "room": self.code, "you": side, "phase": self.phase,
-            "settings": {"team_size": self.team_size, "zei": self.zei_enabled, "max_team": MAX_TEAM},
+            "t": "state", "room": self.code, "you": None if watcher else key,
+            "role": "watch" if watcher else "play", "phase": self.phase,
+            "settings": {"team_size": self.team_size, "zei": self.zei_enabled, "max_team": MAX_TEAM,
+                         "timers": self.timers_enabled, "choose_seconds": CHOOSE_SECONDS, "zei_seconds": ZEI_SECONDS},
             "seats": {s: None if x is None else {
                 "name": x.name, "bot": x.is_bot, "connected": x.connected or x.is_bot,
                 "ready": x.team is not None, "auto_zei": x.auto_zei,
             } for s, x in self.seats.items()},
+            "watchers": [w.name for w in self.watchers.values()],
+            "chat": self.chat[-CHAT_SEND:],
         }
         if self.phase == "lobby":
-            state["my_team"] = seat.team
+            state["my_team"] = seat.team if seat else None
             return state
         battle = self.battle
         view = battle.view()
-        foe = "B" if side == "A" else "A"
-        view["players"][foe]["team"] = [               # 对手还没上过场的人物看不到
-            f if f["entered"] else {"hidden": True, "defeated": False}
-            for f in view["players"][foe]["team"]
-            if f["entered"] or not f["is_true_body"]    # 没上场的真身不占位置（它排在最后，不影响下标）
-        ]
+        hidden = SIDES if watcher else ("B" if key == "A" else "A",)
+        for side in hidden:                             # 还没上过场的人物：对手看不到，观战的人两边都看不到
+            view["players"][side]["team"] = [
+                f if f["entered"] else {"hidden": True, "defeated": False}
+                for f in view["players"][side]["team"]
+                if f["entered"] or not f["is_true_body"]    # 没上场的真身不占位置（它排在最后，不影响下标）
+            ]
         request = view.pop("pending")
         view.pop("waiting_for")
+        reader = watcher or seat
         state["view"] = view
-        state["events_from"] = seat.events_sent
-        state["events"] = battle.events[seat.events_sent:]
-        seat.events_sent = len(battle.events)
+        state["events_from"] = reader.events_sent
+        state["events"] = battle.events[reader.events_sent:]
+        reader.events_sent = len(battle.events)
         state["last_zei"] = self.last_zei
         state["paused"] = request is not None        # 结算停在半路：view 还是这一段开始前的局面
-        state["need"], state["prompt"] = self._need(side, request)
+        state["need"], state["prompt"] = self._need("" if watcher else key, request)
+        if watcher and state["need"] != "over":
+            state["need"] = "watch"
+        state["timers"] = self._timers_view()
+        state["replay_id"] = self.replay_id
         if state["need"] == "choose":
-            state["actions"] = [self._action_view(a) for a in battle.legal_actions(side)]
+            state["actions"] = [self._action_view(a) for a in battle.legal_actions(key)]
         return state
 
     def _need(self, side: str, request: dict[str, Any] | None) -> tuple[str, dict[str, Any] | None]:
+        """这个人现在要做什么。side 传空字符串表示旁观的人。"""
         if self.battle.done:
             return "over", {"winner": self.battle.winner}
         if request and request["kind"] == "zei":

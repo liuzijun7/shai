@@ -126,3 +126,23 @@ input[type="text"], select { background: var(--sheet); border: 1.5px solid var(-
   .lower { grid-template-columns: 1fr; } .lower .logbox { grid-column: 1; }
 }
 @media (prefers-reduced-motion: reduce) { .fx { display: none; } }
+
+/* ---------- 第五步：聊天、倒计时、以前的对局 ---------- */
+.join .check { display: flex; gap: 6px; align-items: center; }
+.replays { margin-top: 0; max-width: 620px; }
+.replaylist { display: grid; gap: 8px; color: var(--ink); }
+.replayrow { display: flex; flex-wrap: wrap; gap: 6px 12px; justify-content: space-between; align-items: center; border-top: 1px solid var(--rule); padding-top: 8px; }
+.replayrow:first-child { border-top: 0; padding-top: 0; }
+.lobby { display: grid; grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr); gap: 14px; align-items: start; }
+.chat { height: 150px; overflow-y: auto; font-size: .9rem; background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; padding: 6px 10px; overflow-wrap: anywhere; }
+.chatbox .chat { height: 320px; }
+.chat p { margin: 0; }
+.chat p.sys { color: var(--muted); font-size: .85rem; }
+.chat .who-A { color: var(--pen); } .chat .who-B { color: var(--red); } .chat .who-w { color: var(--muted); }
+.chatform { flex-wrap: nowrap; }
+.chatform input { flex: 1; min-width: 0; }
+.lower .log { height: 220px; }
+.clock { font: 700 .95rem ui-monospace, Consolas, monospace; color: var(--muted); justify-self: start; }
+.clock:empty { display: none; }
+.clock.urgent { color: var(--red); }
+@media (max-width: 860px) { .lobby { grid-template-columns: 1fr; } }

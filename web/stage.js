@@ -52,6 +52,7 @@ class Stage {
   constructor(root, mySide, sceneList) {
     this.root = root; this.me = mySide; this.foe = mySide === "A" ? "B" : "A";
     this.speed = 1; this.skipping = false; this.model = null; this.spriteName = {};
+    this.labels = null;       // 观战和回放时两边显示玩家的名字，不显示“你”和“对手”
     const heights = {};
     for (const s of sceneList) (heights[s.height] = heights[s.height] || []).push(s.name);
     this.layers = Object.keys(heights).map(Number).sort((a, b) => b - a).map((h) => ({ h, names: heights[h] }));
@@ -83,7 +84,7 @@ class Stage {
     if (f.radiation) chips.push(`<span class="chip bad">辐射 ${f.radiation}/15</span>`);
     const lives = f.lives_total > 1 ? `<span class="lives">${"●".repeat(Math.max(0, f.lives_remaining))}${"○".repeat(Math.max(0, f.lives_total - f.lives_remaining))}</span>` : "";
     el.innerHTML = `
-      <div class="row"><b class="name">${esc(f.name)}</b>${lives}<span class="who">${side === this.me ? "你" : "对手"}</span></div>
+      <div class="row"><b class="name">${esc(f.name)}</b>${lives}<span class="who">${esc(this.labels ? this.labels[side] : (side === this.me ? "你" : "对手"))}</span></div>
       <div class="bar"><i style="width:${pct(f.hp, f.max_hp)}%"></i><span>${f.hp} / ${f.max_hp}</span></div>
       ${f.max_shield ? `<div class="bar shield"><i style="width:${pct(f.shield, f.max_shield)}%"></i><span>盾 ${f.shield}</span></div>` : ""}
       <div class="chips">${chips.join("")}</div>`;
@@ -117,7 +118,11 @@ class Stage {
   wait(ms) { return this.fast ? Promise.resolve() : new Promise((r) => setTimeout(r, ms / this.speed)); }
   anim(el, frames, ms, easing = "ease-out") {
     if (this.fast || !el || !el.animate) return Promise.resolve();
-    return el.animate(frames, { duration: ms / this.speed, easing }).finished.catch(() => {});
+    const duration = ms / this.speed;
+    const done = el.animate(frames, { duration, easing }).finished.catch(() => {});
+    // 浏览器不画这个页面的时候（窗口被完全挡住，或者标签页在后台），动画不会走完。
+    // 多等一小会儿还没完就不等了，免得整个界面卡在“正在播放”。
+    return Promise.race([done, new Promise((r) => setTimeout(r, duration + 400))]);
   }
   center(side) {
     const a = this.box(side).querySelector(".sprite").getBoundingClientRect(), b = this.root.getBoundingClientRect();
