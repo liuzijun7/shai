@@ -60,8 +60,52 @@ SKILLS["c_swap_hp"] = _gd.skill(
     description="和对手互换体力和体力上限。",
 )
 
+# ---------- 本子里有、引擎里没有的招（第一批：本子上效果写得明白的） ----------
+# 雨晨：无限模式下的伤害“你先照同档的招类推出一张表，我来改”。
+# 伤害、防御、距离都在下面这张表里，要改就改这里的数字。
+# 距离是引擎的概念，本子没有：本子写了“能打到天上”的招照雷神之怒给 3，其余给 0。
+# 本子的防御有 5 档，引擎只有 4 档，本子写防 5 的这里记成 4（引擎对火山爆发、究极吸取也是这样处理的）。
+
+
+def _extra(skill_id, name, attributes, damage, statuses, defense, distance, effect=None, description="", **more):
+    spec = _gd.skill(skill_id, name, attributes, damage, statuses, defense, distance,
+                     effect=effect, description=description)
+    spec.update(more)
+    SKILLS[skill_id] = spec
+
+
+_SEAL_ALL_BUT_SHEN = [(seal, 5) for attribute, seal in SEAL_BY_ATTRIBUTE.items() if attribute != "神技"]
+
+_extra("x1", "天雷", ["物理"], 15000, [("昏睡", 1)], 2, 3)
+_extra("x2", "芒星", ["物理"], 10000, [("封品", 4)], 2, 0)
+_extra("x3", "麒麟", ["物理"], 20000, [("封生", 4)], 2, 0)
+_extra("x4", "藤蔓抽打", ["物理"], 20000, [], 3, 0, effect="to_scene", scene="雨林",
+       description="把对手打进雨林。")
+_extra("x5", "泥石流", ["地理"], 10000, [], 1, 0, effect="lower_target", description="对手往下掉一层。")
+_extra("x6", "千里寒极冰", ["物理"], 40000, [], 4, 0, effect="to_scene", scene="南极",
+       description="把对手打进南极。")
+_extra("x7", "一零二仙折", ["物理"], 20000, _SEAL_ALL_BUT_SHEN, 4, 3, effect="drop_ground",
+       description="除了神技，对手所有属性的招封 5 回合；对手掉到地面。先手，必中。")
+_extra("x8", "七八五重雷", ["物理"], 0, [("昏睡", 2)], 4, 3)
+_extra("x9", "行星撞地球", ["物理", "地理"], 90000, [("昏睡", 4)], 4, 3, effect="planet",
+       description="要花 3 个星体能量和 1 个超新星。对手掉到地面，累计辐射 1 次。先手，必中。")
+_extra("x10", "焚风", ["物理", "特技", "地理"], 20000, [("点燃", 2)], 3, 3, effect="foehn",
+       description="吹掉对手的万能胶，把对手刮回地面。")
+_extra("x11", "布拉风", ["物理", "特技", "地理"], 30000, [("昏睡", 5)], 4, 3, effect="to_scene", scene="南极",
+       description="把对手刮到南极。")
+_extra("x12", "九十二三弑", ["物理"], 9000, [("封神", 5)], 3, 0, effect="u92",
+       description="一半的可能让对手昏睡 3 回合；累计辐射 1 次。")
+_extra("x13", "三聚氰胺", ["化学", "物品"], 0, [], 1, 0, effect="melamine",
+       description="对手手里的万灵丹全部失效。")
+
+EXTRA_SKILL_IDS = tuple(key for key in SKILLS if key.startswith("x"))
+
 # 本子上圈了“先”字的招：比普通招先出手，比神技慢。
-FIRST_STRIKE_IDS = {"21", "23", "24"}  # 雷神之怒、太阳黑子爆、伽马射线
+FIRST_STRIKE_IDS = {"21", "23", "24", "x7", "x9"}  # 雷神之怒、太阳黑子爆、伽马射线、一零二仙折、行星撞地球
+# 本子上圈了“必”字的招：必中（γ 射线本来就不走闪避）。
+SURE_HIT_IDS = {"x7", "x9"}
+FIRE_SKILL_NAMES = {"火山爆发", "百步烈烧", "千步烈烧", "焚风"}             # “免疫火系”挡这些
+ICE_SKILL_NAMES = {"寒潮", "极光", "灵气寒霜指", "千里寒极冰"}               # “免疫冰系”挡这些
 
 # 出手顺序的档位，数字大的先出手。
 TIER_NORMAL, TIER_FIRST, TIER_SHEN, TIER_LINGBO4, TIER_SWITCH, TIER_FAN_SWAP = 0, 20, 30, 40, 60, 70
@@ -135,7 +179,7 @@ NOT_YET_IMPLEMENTED_SKILLS = {"t8", "c_newton_scene"}
 
 def character_skill_ids(character_data: dict) -> tuple[str, ...]:
     extra = tuple(s for s in character_data.get("skills", ()) if s not in NOT_YET_IMPLEMENTED_SKILLS)
-    return COMMON_SKILL_IDS + SYSTEM_ACTION_IDS + extra
+    return COMMON_SKILL_IDS + EXTRA_SKILL_IDS + SYSTEM_ACTION_IDS + extra
 
 
 def is_signature(character_name: str, spec: dict) -> bool:

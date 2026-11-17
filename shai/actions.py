@@ -115,6 +115,9 @@ class Actions:
                 return self.after_special(actor, spec)
         if effect == "sunspot":
             actor.resources["星体能量"] -= 3
+        if effect == "planet":
+            actor.resources["超新星"] -= 1
+            actor.resources["星体能量"] -= 3
         if effect == "gamma" and actor.name != "达伽马":
             actor.resources["超新星"] -= 1
             actor.resources["星体能量"] -= 5
@@ -220,6 +223,26 @@ class Actions:
             for name in list(target.inner):
                 target.inner[name] = max(0, target.inner[name] - 1)
             self._log(f"{L(target)}的全部内功下降一级。")
+        elif effect == "to_scene":
+            self.set_scene(target, spec["scene"])
+        elif effect == "foehn":
+            if target.statuses.pop("万能胶", None):
+                self._emit("status_end", side=target.side, name="万能胶")
+                self._log(f"{L(target)}的万能胶被吹掉。")
+            self.set_scene(target, "地面")
+        elif effect == "planet":
+            if target.scene_height > 0:
+                self.set_scene(target, "地面")
+            self.add_radiation(target, 1, actor.side, "行星撞地球")
+        elif effect == "u92":
+            if self._chance(0.5, actor.side, f"{L(actor)}的九十二三弑能否让对手昏睡"):
+                self.apply_status(target, "昏睡", self.duration(actor, spec, 3), actor.side)
+            if not target.defeated:
+                self.add_radiation(target, 1, actor.side, "九十二三弑")
+        elif effect == "melamine":
+            if target.resources["万灵丹"]:
+                target.resources["万灵丹"] = 0
+                self._log(f"{L(target)}的万灵丹全部失效。")
         elif effect == "typhoon":
             for key in target.resources:
                 if key != "氧气":

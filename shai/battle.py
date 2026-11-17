@@ -692,6 +692,8 @@ class Battle(Rules, Actions, TurnStart, Forms):
             return "需要1超新星和5星体能量"
         if effect == "sunspot" and actor.resources["星体能量"] < 3:
             return "需要3星体能量"
+        if effect == "planet" and (actor.resources["超新星"] < 1 or actor.resources["星体能量"] < 3):
+            return "需要1超新星和3星体能量"
         if effect == "panacea" and actor.resources["万灵丹"] < 1:
             return "没有万灵丹"
         if effect == "collect_supernova" and not SCENES[actor.scene].get("collect_supernova"):

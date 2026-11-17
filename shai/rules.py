@@ -13,8 +13,9 @@ from math import floor
 from typing import Any
 
 from .data import (
-    ALL_INNER_NAMES, CHARACTERS, CONTROL_STATUSES, DAMAGE_STATUSES, INNER_VALUES, LEARN_MULTIPLIER,
-    LEARN_THRESHOLDS, MAX_INNER_LEVEL, MAX_LEARNED_INNER, SCENES, SELF_BUFFS, VERTICAL_SCENES,
+    ALL_INNER_NAMES, CHARACTERS, CONTROL_STATUSES, DAMAGE_STATUSES, FIRE_SKILL_NAMES, ICE_SKILL_NAMES,
+    INNER_VALUES, LEARN_MULTIPLIER,
+    LEARN_THRESHOLDS, MAX_INNER_LEVEL, MAX_LEARNED_INNER, SCENES, SELF_BUFFS, SURE_HIT_IDS, VERTICAL_SCENES,
 )
 from .model import Fighter, Parasite, RuleError, Status
 
@@ -47,7 +48,7 @@ class Rules:
     # ---------- 命中和免疫 ----------
 
     def skill_hits(self, actor: Fighter, target: Fighter, spec: dict[str, Any]) -> bool:
-        if "必中" in self.traits(actor):
+        if "必中" in self.traits(actor) or spec["id"] in SURE_HIT_IDS:
             return True
         if actor.has_status("虚空") and not self._chance(0.25, actor.side, f"{self.label(actor)}中了虚空，【{spec['name']}】能否命中"):
             return False
@@ -67,9 +68,9 @@ class Rules:
             why = "免疫物理技能"
         elif "免疫魔法" in traits and "魔法" in attrs:
             why = "免疫魔法技能"
-        elif "免疫火系" in traits and spec["name"] in {"火山爆发", "百步烈烧", "千步烈烧"}:
+        elif "免疫火系" in traits and spec["name"] in FIRE_SKILL_NAMES:
             why = "免疫火系技能"
-        elif "免疫冰系" in traits and spec["name"] in {"寒潮", "极光", "灵气寒霜指"}:
+        elif "免疫冰系" in traits and spec["name"] in ICE_SKILL_NAMES:
             why = "免疫冰系技能"
         if why is None:
             return False
