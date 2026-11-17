@@ -312,6 +312,14 @@ class Stage {
         if (f) { f.statuses = {}; f.parasites = {}; f.radiation = 0; f.scene = ev.scene; f.height = ev.height; }
         this.vitals(ev.side, ev); this.gauge();
         return this.flash(ev.side, "#fff");
+      case "divine": this.pop(ev.side, "占卜：" + ev.attribute, "note"); return this.wait(400);
+      case "divine_hit": Sfx.heal(); this.vitals(ev.side, ev); this.pop(ev.side, "占中了", "heal"); await this.flash(ev.side, "#d4a514"); return;
+      case "evolve":
+        if (f) { f.name = ev.new; f.statuses = f.statuses || {}; }
+        this.vitals(ev.side, ev); this.sprite(ev.side);
+        this.pop(ev.side, ev.why + "：" + ev.new, "heal");
+        await this.flash(ev.side, "#d4a514");
+        return this.wait(300);
       case "zei": Sfx.zei(); return;
       case "phase": return this.wait(200);
       case "end": Sfx.win(); return this.announce("对战结束", 900);

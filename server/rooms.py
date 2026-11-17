@@ -276,6 +276,7 @@ class Room:
         state["events"] = battle.events[seat.events_sent:]
         seat.events_sent = len(battle.events)
         state["last_zei"] = self.last_zei
+        state["paused"] = request is not None        # 结算停在半路：view 还是这一段开始前的局面
         state["need"], state["prompt"] = self._need(side, request)
         if state["need"] == "choose":
             state["actions"] = [self._action_view(a) for a in battle.legal_actions(side)]

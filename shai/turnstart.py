@@ -14,6 +14,8 @@ from __future__ import annotations
 from .data import SCENES
 
 DRAGONS = {"龙王", "肥龙王"}
+DIVINERS = {"占卜大师", "魔法师"}
+ATTRIBUTE_CHOICES = ("物理", "魔法", "特技", "地理", "化学", "生物", "神技", "物品", "无属性")
 
 
 class TurnStart:
@@ -38,6 +40,45 @@ class TurnStart:
                 destination = own or forced
             if destination:
                 self.set_scene(target, destination)
+
+    # ---------- 占卜 ----------
+    # 雨晨的回答：每回合出招之前，占卜大师猜对手这回合用什么属性的招，双方都能看到他猜了什么。
+    # 对手真的用了就算占中：体力和体力上限各加“占中的次数 × 1 万”。占中 3 次变成魔法师。
+
+    def divination_phase(self) -> None:
+        for side in ("A", "B"):
+            diviner, foe = self.fighter(side), self.fighter(self.other(side))
+            diviner.counters.pop("divination", None)
+            if diviner.name not in DIVINERS or diviner.defeated or foe.defeated or side in self.skipping:
+                continue
+            options = [{"id": "", "name": "这回合不占卜"}] + [{"id": a, "name": a} for a in ATTRIBUTE_CHOICES]
+            guess = self._decide("choose", side=side, options=options,
+                                 reason=f"{self.label(diviner)}占卜：对手这回合用什么属性的招")["value"]
+            if guess:
+                diviner.counters["divination"] = guess
+                self._emit("divine", side=side, attribute=guess)
+                self._log(f"{self.label(diviner)}占卜：对手这回合会用【{guess}】的招。")
+
+    def check_divination(self, specs: dict) -> None:
+        for side in ("A", "B"):
+            diviner = self.fighter(side)
+            guess = diviner.counters.pop("divination", None)
+            if not guess or diviner.defeated:
+                continue
+            spec = specs[self.other(side)]
+            used = spec["action_kind"] not in {"defense", "skip", "switch"}
+            hit = used and (guess in spec["attributes"] or (guess == "无属性" and not spec["attributes"]))
+            if not hit:
+                self._log(f"{self.label(diviner)}没有占中。")
+                continue
+            count = int(diviner.counters.get("divination_hits", 0)) + 1
+            diviner.counters["divination_hits"] = count
+            diviner.max_hp += count * 10000
+            diviner.hp += count * 10000
+            self._emit("divine_hit", side=side, count=count, **self.vitals(diviner))
+            self._log(f"{self.label(diviner)}占中了（第{count}次），体力和体力上限各加{count * 10000}。")
+            if count >= 3 and diviner.name == "占卜大师":
+                self.transform(diviner, "魔法师", "进化")
 
     def _ask_scene(self, side: str, reason: str, none_label: str) -> str | None:
         options = [{"id": "", "name": none_label}] + [{"id": name, "name": name} for name in SCENES]

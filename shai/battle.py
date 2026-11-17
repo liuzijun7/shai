@@ -81,6 +81,11 @@ class Battle(Rules, Actions, TurnStart):
         self._forced_first: str | None = None
         self._unit: str | None = None
         self._snap: dict[str, Any] | None = None
+        # 这一段里已经定下来、可以给玩家看的事件条数。停下来等人之前发生的事不会再变，所以照常显示。
+        self._kept = 0
+        self._count = 0
+        self._mute = False                    # 试算先后顺序时不产生事件
+        self._want_start = False              # 这一回合结算完了，下一回合的“回合开始”单独算一段
         self.history: list[dict[str, Any]] = []   # 每一步输入，用来回放
 
         names = {side: self.fighter(side).name for side in SIDES}
@@ -181,6 +186,7 @@ class Battle(Rules, Actions, TurnStart):
         self._unit = unit
         self._snap = self._snapshot()
         self._decisions = []
+        self._kept = 0
         self._run()
 
     def _run(self) -> None:
@@ -189,10 +195,11 @@ class Battle(Rules, Actions, TurnStart):
         while status == "need" and request["kind"] == "order" and self.probe_order and guard < 8:
             guard += 1
             prints = []
+            self._mute = True
             for first in request["sides"]:      # 两种先后顺序各试算一遍
                 self._forced_first = first
                 prints.append(self._attempt()[2])
-            self._forced_first = None
+            self._forced_first, self._mute = None, False
             self._restore(self._snap)
             if prints[0] is None or prints[0] != prints[1]:
                 break                           # 先后有区别（或者试算中途还要贼）：要贼
@@ -200,6 +207,11 @@ class Battle(Rules, Actions, TurnStart):
             status, request, _ = self._attempt()
         if status == "done":
             self.pending, self._decisions, self._snap, self._unit = None, [], None, None
+            if self._want_start and not self.done:
+                # 回合的结果先定下来，再开始下一回合。这样下一回合开始时的提问（占卜、龙王移场景）
+                # 不会让上一回合的结果悬着。
+                self._want_start = False
+                self._begin("start")
         else:
             self.pending = self._public_request(request)
 
@@ -207,18 +219,22 @@ class Battle(Rules, Actions, TurnStart):
         """从存的局面把这一段完整算一次。返回 (状态, 问题, 局面指纹)。"""
         self._restore(self._snap)
         self._cursor = 0
+        self._count = 0
         try:
             if self._unit == "open":
                 self._open()
+            elif self._unit == "start":
+                self._start_phase()
             else:
                 self._resolve_round()
             return "done", None, None
         except _ProbeStop:
             return "probe", None, self._fingerprint()
         except NeedDecision as need:
-            # 停下来之前这一段已经发生了什么：给玩家看，让他知道在为什么而贼
-            need.request["so_far"] = [e["text"] for e in self.events[self._snap["events"]:] if e["t"] == "log"]
+            if not self._mute:
+                self._kept = max(self._kept, self._count)   # 停下来之前发生的事保留下来，照常显示
             self._restore(self._snap)
+            need.request["so_far"] = [e["text"] for e in self.events[self._snap["events"]:] if e["t"] == "log"][-6:]
             return "need", need.request, None
         finally:
             self.rng = self._main_rng
@@ -236,8 +252,11 @@ class Battle(Rules, Actions, TurnStart):
         self.choices = copy.deepcopy(snap["choices"])
         self.skipping = set(snap["skipping"])
         self.round, self.water_level, self.done, self.winner = snap["scalars"]
-        del self.log[snap["log"]:]
-        del self.events[snap["events"]:]
+        self._want_start = False
+        keep = snap["events"] + (self._kept if snap is self._snap else 0)
+        kept_logs = sum(1 for e in self.events[snap["events"]:keep] if e["t"] == "log")
+        del self.events[keep:]
+        del self.log[snap["log"] + kept_logs:]
         self._main_rng.setstate(snap["rng"])
         self.rng = self._main_rng
 
@@ -347,6 +366,7 @@ class Battle(Rules, Actions, TurnStart):
                 self.skipping.discard(side)
                 self.choices.pop(side, None)
         self.scene_phase()                      # 牛顿选场景、龙王移动对手、库巴的扔和跑
+        self.divination_phase()                 # 占卜大师猜对手这回合用什么属性的招
         if len(self.choices) == 2:              # 双方都不能出招：直接结算这一回合
             self._resolve_round()
 
@@ -357,6 +377,7 @@ class Battle(Rules, Actions, TurnStart):
         self._emit("round", n=self.round, choices=chosen)
         self._log(f"第{self.round}回合：A的{self.fighter('A').name}选择【{specs['A']['name']}】，"
                   f"B的{self.fighter('B').name}选择【{specs['B']['name']}】。")
+        self.check_divination(specs)
         # A、B 各用一条独立的随机数流：谁先出手不会改变另一方的随机结果。
         streams = {side: random.Random(self._main_rng.getrandbits(64)) for side in SIDES}
 
@@ -454,7 +475,7 @@ class Battle(Rules, Actions, TurnStart):
         if self._check_end():
             return
         self.round += 1
-        self._start_phase()
+        self._want_start = True
 
     # ================= 换人和胜负 =================
 
@@ -631,8 +652,17 @@ class Battle(Rules, Actions, TurnStart):
         }
 
     def _log(self, message: str) -> None:
+        if self._skip_event():
+            return
         self.log.append(message)
         self.events.append({"t": "log", "text": message})
 
     def _emit(self, kind: str, **data: Any) -> None:
+        if self._skip_event():
+            return
         self.events.append({"t": kind, **data})
+
+    def _skip_event(self) -> bool:
+        """重算时，上一次已经显示过的事件不再重复；试算时什么都不产生。"""
+        self._count += 1
+        return self._mute or self._count <= self._kept

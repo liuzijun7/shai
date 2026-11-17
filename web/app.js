@@ -246,7 +246,7 @@ async function pump() {
   playing = false;
   if (stage && S && S.view) {
     stage.skipping = false;
-    stage.setModel(modelOf(S.view));          // 播完以后和服务器的局面对齐
+    if (!S.paused) stage.setModel(modelOf(S.view));   // 播完以后和服务器的局面对齐；停在半路时以已播的事件为准
     $("#bench-me").innerHTML = benchHtml(me.side); $("#bench-foe").innerHTML = benchHtml(foeSide());
   }
   renderControls();

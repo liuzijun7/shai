@@ -492,6 +492,21 @@ class Rules:
         if actor.counters["underwater_turns"] % 3 == 0:
             self.move_vertical(actor, 1)
 
+    # ---------- 进化和衰变 ----------
+
+    def transform(self, fighter: Fighter, new_name: str, why: str) -> None:
+        """把人物变成另一个形态（进化或衰变）。体力按新形态回满，内功取新旧两边较高的等级。"""
+        from .data import CHARACTER_NAME_TO_ID
+        old_name, data = fighter.name, CHARACTERS[CHARACTER_NAME_TO_ID[new_name]]
+        fighter.character_id, fighter.name = data["id"], data["name"]
+        fighter.max_hp, fighter.hp, fighter.distance = data["hp"], data["hp"], data["distance"]
+        for name, level in data["inner"].items():
+            fighter.inner[name] = max(int(fighter.inner.get(name, 0)), level)
+        fighter.initial_inner = dict(fighter.inner)
+        fighter.counters["form_turns"] = 0
+        self._emit("evolve", side=fighter.side, old=old_name, new=new_name, why=why, **self.vitals(fighter))
+        self._log(f"{fighter.side}的{old_name}{why}成{new_name}，体力回满。")
+
     # ---------- 死亡和多条命 ----------
 
     def check_death(self, fighter: Fighter, source: str | None, reason: str) -> None:

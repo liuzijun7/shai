@@ -361,3 +361,33 @@ class TurnStartScenes(unittest.TestCase):
         b.answer("")
         self.assertIsNone(b.pending)
         self.assertEqual(b.fighter("A").scene, "地面")
+
+
+class Divination(unittest.TestCase):
+    @staticmethod
+    def round_with_guess(b, guess, a_move, b_move):
+        """回合开始先回答占卜，再双方选招；中途的贼都让 A 赢，但不替占卜大师回答下一回合的占卜。"""
+        b.answer(guess)
+        b.choose("A", a_move)
+        b.choose("B", b_move)
+        while b.pending and b.pending["kind"] == "zei":
+            b.answer("A")
+
+    def test_hit_adds_hp_and_three_hits_evolve(self):
+        b = Battle(["占卜大师"], ["饕餮"], seed=1, true_body=False)
+        self.assertIn("占卜", b.pending["reason"])
+        for hits in (1, 2):
+            before = b.fighter("A").max_hp
+            self.round_with_guess(b, "无属性", "d1", "0")     # 猜对手用无属性的招（普通攻击）
+            self.assertEqual(b.fighter("A").max_hp, before + hits * 10000)
+        self.round_with_guess(b, "无属性", "d1", "0")
+        self.assertEqual(b.fighter("A").name, "魔法师")        # 占中 3 次进化
+        self.assertEqual(b.fighter("A").hp, b.fighter("A").max_hp)
+
+    def test_miss_changes_nothing_and_guess_is_public(self):
+        b = Battle(["占卜大师"], ["饕餮"], seed=1, true_body=False)
+        before = b.fighter("A").max_hp
+        self.round_with_guess(b, "魔法", "d1", "0")
+        self.assertIn("A的占卜大师占卜：对手这回合会用【魔法】的招。", b.log)   # 双方都看得到
+        self.assertIn("A的占卜大师没有占中。", b.log)
+        self.assertEqual(b.fighter("A").max_hp, before)
