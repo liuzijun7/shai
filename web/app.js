@@ -1,6 +1,7 @@
 "use strict";
-// 第二步的网页：进房间、选人、对战、贼、文字战报。没有动画（第三步做）。
+// 网页客户端：进房间、选人、对战。
 // 网页不懂规则：服务器发来“你现在能看到什么、需要做什么”，这里只负责显示和把选择发回去。
+// 对战画面和动画在 stage.js 里。
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -18,10 +19,15 @@ let ws = null;
 let me = null;            // {room, side, token, name}
 let S = null;             // 服务器发来的最新局面
 let catalog = [];         // 可以选的人物
-let scenes = [];
+let scenes = [];          // [{name, height}]
+let ART = new Set();      // 有图的人物名字；没有图的用圆圈加名字顶替
 let events = [];          // 从开局到现在的全部事件
+let stage = null;         // 对战舞台（stage.js）
+let played = 0;           // 已经播过动画的事件条数
+let playing = false;
 const ui = { picked: [], tab: "全部", search: "", sceneAction: null, wanted: null };
 const HAND_NAMES = ["石头", "剪刀", "布"];
+const HAND_GLYPH = { "石头": "✊", "剪刀": "✌", "布": "✋" };
 const TABS = ["全部", "技能", "神技", "防御", "物品", "专属", "换人"];
 
 function toast(text) {
@@ -43,7 +49,7 @@ function connect(room, name) {
     if (m.t === "error") return toast(m.message);
     if (m.t === "joined") {
       me = { room: m.room, side: m.side, token: m.token, name };
-      catalog = m.characters; scenes = m.scenes; events = [];
+      catalog = m.characters; scenes = m.scenes; ART = new Set(m.art || []); events = []; stage = null; played = 0;
       seatStore.set("shai-token-" + m.room, m.token);
       ui.wanted.room = m.room; location.hash = m.room;
       return;
@@ -54,7 +60,7 @@ function connect(room, name) {
         if (m.events_from === 0) events = [];
         if (m.events_from === events.length) events = events.concat(m.events);
       }
-      if (m.phase === "lobby") events = [];
+      if (m.phase === "lobby") { events = []; stage = null; played = 0; }
       render();
     }
   };
@@ -110,9 +116,10 @@ function renderLobby() {
         const order = picked.indexOf(c.name);
         const inner = Object.entries(c.inner).map(([k, v]) => k + v).join(" ");
         return `<button class="card" data-name="${esc(c.name)}" aria-pressed="${order >= 0}" ${ready ? "disabled" : ""}>
-          <b>${order >= 0 ? (order + 1) + ". " : ""}${esc(c.name)}</b>
+          <span class="face">${ART.has(c.name) ? `<img src="assets/characters/${encodeURIComponent(c.name)}.png" alt="">` : `<i>${esc(c.name.slice(0, 1))}</i>`}</span>
+          <span class="about"><b>${order >= 0 ? (order + 1) + ". " : ""}${esc(c.name)}</b>
           <small>体力 ${c.hp / 10000} 万${c.shield ? "　盾 " + c.shield / 10000 + " 万" : ""}${c.lives > 1 ? "　" + c.lives + " 条命" : ""}　距离 ${c.distance}</small>
-          <small>${esc(inner || "没有内功")}</small><small>${esc(c.traits.join("、"))}</small></button>`;
+          <small>${esc(inner || "没有内功")}</small><small>${esc(c.traits.join("、"))}</small></span></button>`;
       }).join("")}</div>
     </div>`;
   if (host) {
@@ -132,39 +139,32 @@ function renderLobby() {
 
 // ---------- 对战 ----------
 
-function fighterHtml(f) {
-  if (!f || f.hidden) return `<div class="muted">还没露面</div>`;
-  const pct = (a, b) => Math.max(0, Math.min(100, (100 * a) / Math.max(1, b)));
-  const chips = [];
-  for (const [n, s] of Object.entries(f.statuses)) chips.push(`<span class="chip ${["氪", "真空", "狂龙", "道威", "无敌"].includes(n) ? "good" : "bad"}">${esc(n)} ${s.turns}${s.layer === "shield" ? "（盾）" : ""}</span>`);
-  for (const [n, p] of Object.entries(f.parasites)) chips.push(`<span class="chip bad">${esc(n)} ×${p.count}</span>`);
-  if (f.radiation) chips.push(`<span class="chip bad">辐射 ${f.radiation}/15</span>`);
-  const inner = Object.entries(f.inner).filter(([, v]) => v > 0).map(([k, v]) => `<span class="chip">${esc(k)}${v}</span>`).join("");
-  const items = Object.entries(f.resources).filter(([, v]) => v > 0).map(([k, v]) => `<span class="chip">${esc(k)} ${v}</span>`).join("");
-  return `<div class="fighter">
-    <div class="row"><span class="name">${esc(f.name)}</span><span>${esc(f.scene)}（高度 ${f.height}）</span>${f.lives_total > 1 ? `<span>命 ${f.lives_remaining}/${f.lives_total}</span>` : ""}</div>
-    <div class="bar"><i style="width:${pct(f.hp, f.max_hp)}%"></i><span>体力 ${f.hp} / ${f.max_hp}</span></div>
-    ${f.max_shield ? `<div class="bar shield"><i style="width:${pct(f.shield, f.max_shield)}%"></i><span>盾 ${f.shield} / ${f.max_shield}</span></div>` : ""}
-    <div class="chips">${chips.join("") || `<span class="muted">没有状态</span>`}</div>
-    <div class="chips">${inner}</div><div class="chips">${items}</div></div>`;
-}
+const foeSide = () => (me.side === "A" ? "B" : "A");
+const modelOf = (view) => ({
+  A: view.players.A.team[view.players.A.active], B: view.players.B.team[view.players.B.active], water: view.water_level,
+});
 
-function sideHtml(side) {
-  const p = S.view.players[side], seat = S.seats[side];
-  const bench = p.team.map((f, i) => {
+function benchHtml(side) {
+  const p = S.view.players[side];
+  const chips = p.team.map((f, i) => {
     if (i === p.active) return "";
     if (f.hidden) return `<span class="chip">？</span>`;
     if (f.is_true_body && !f.entered) return "";
     return `<span class="chip ${f.defeated ? "out" : ""}">${esc(f.name)}${f.defeated ? "" : " " + f.hp}</span>`;
   }).join("");
-  return `<div class="panel side">
-    <h2>${side === me.side ? "你" : "对手"} <span>${esc(seat ? seat.name : "")}${S.view.chosen[side] && S.need !== "over" ? "　已选招" : ""}</span></h2>
-    ${fighterHtml(p.team[p.active])}
-    <div class="chips"><span class="muted">场下：</span>${bench || `<span class="muted">没有</span>`}</div></div>`;
+  const active = p.team[p.active];
+  const inner = Object.entries(active.inner || {}).filter(([, v]) => v > 0).map(([k, v]) => `<span class="chip">${esc(k)}${v}</span>`).join("");
+  const items = Object.entries(active.resources || {}).filter(([, v]) => v > 0).map(([k, v]) => `<span class="chip">${esc(k)} ${v}</span>`).join("");
+  const seat = S.seats[side];
+  return `<div class="row"><b>${side === me.side ? "你" : "对手"}（${esc(seat ? seat.name : "")}）</b>${S.view.chosen[side] && S.need !== "over" ? `<span class="chip on">已选招</span>` : ""}</div>
+    <div class="chips"><span class="muted">场下：</span>${chips || `<span class="muted">没有</span>`}</div>
+    <div class="chips"><span class="muted">内功：</span>${inner || `<span class="muted">没有</span>`}</div>
+    <div class="chips"><span class="muted">物品：</span>${items}</div>`;
 }
 
 function promptHtml() {
-  const p = S.prompt || {}, foe = me.side === "A" ? "B" : "A";
+  const p = S.prompt || {}, foe = foeSide();
+  if (playing) return `<div class="panel prompt wait"><div class="row"><span class="muted">正在播放这一回合…</span><button id="skip">跳过动画</button></div></div>`;
   const soFar = (p.so_far || []).length ? `<ul>${p.so_far.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : "";
   if (S.need === "over") {
     const text = p.winner == null ? "平局" : (p.winner === me.side ? "你赢了" : "你输了");
@@ -175,10 +175,10 @@ function promptHtml() {
     return `<div class="panel prompt"><b>${esc(p.reason)}</b>${soFar}<div class="row">${p.options.map((o) => `<button class="primary" data-pick="${esc(o.id)}">${esc(o.name)}</button>`).join("")}</div></div>`;
   }
   if (S.need === "throw" || S.need === "redo" || (S.need === "wait" && p.mode)) {
-    const rounds = (p.rounds || []).map((r, i) => `<li>第 ${i + 1} 轮：你出${esc(r[me.side])}，对手出${esc(r[foe])}</li>`).join("");
+    const rounds = (p.rounds || []).map((r, i) => `<li>第 ${i + 1} 轮：你 ${HAND_GLYPH[r[me.side]]} ${esc(r[me.side])}，对手 ${HAND_GLYPH[r[foe]]} ${esc(r[foe])}</li>`).join("");
     const shown = p.choices ? `<p>你出了【${esc(p.choices[me.side].name)}】，对手出了【${esc(p.choices[foe].name)}】。</p>` : "";
     let body;
-    if (S.need === "throw") body = `<div class="row hands">${HAND_NAMES.map((h) => `<button class="primary" data-hand="${h}">${h}</button>`).join("")}</div>`;
+    if (S.need === "throw") body = `<div class="row hands">${HAND_NAMES.map((h) => `<button class="primary" data-hand="${h}"><span>${HAND_GLYPH[h]}</span> ${h}</button>`).join("")}</div>`;
     else if (S.need === "redo") body = `<div class="row"><b>这一轮你输了。你还能重贼 ${p.redo_left[me.side]} 次。</b><button class="primary" data-redo="1">重贼</button><button data-redo="0">算了</button></div>`;
     else if (p.redo_side) body = `<p class="muted">对手输了，正在决定要不要重贼…</p>`;
     else body = `<p class="muted">${p.thrown && p.thrown[me.side] ? "你已经出了，等对手出拳…" : "等待中…"}</p>`;
@@ -198,49 +198,86 @@ function category(a) {
 }
 
 function actionsHtml() {
-  if (S.need !== "choose") return "";
+  if (S.need !== "choose" || playing) return "";
   const list = (S.actions || []).filter((a) => (ui.tab === "全部" || category(a) === ui.tab) && (!ui.search || a.name.includes(ui.search)));
   const tier = (t) => (t >= 60 ? "换人最先" : t >= 40 ? "比神技快" : t >= 30 ? "神技档" : t >= 20 ? "先手" : "");
   return list.map((a) => {
     const info = [a.attributes.join("+") || (a.action_kind === "skill" ? "无属性" : ""), a.damage ? "伤害 " + a.damage / 10000 + " 万" : "",
       a.defense ? "防 " + a.defense : "", tier(a.tier)].filter(Boolean).join(" · ");
     const extra = (a.statuses || []).map(([n, t]) => n + t).join(" ");
-    return `<button class="action" data-action="${esc(a.id)}" ${a.legal ? "" : "disabled"} title="${esc(a.legal ? a.description || "" : a.reason)}">
+    const color = ATTR_COLOR[a.attributes[0]] || "transparent";
+    return `<button class="action" style="border-left-color:${color}" data-action="${esc(a.id)}" ${a.legal ? "" : "disabled"} title="${esc(a.legal ? a.description || "" : a.reason)}">
       <b>${esc(a.name)}</b><small>${esc(info)}</small>${extra ? `<small>${esc(extra)}</small>` : ""}${a.legal ? "" : `<small>${esc(a.reason)}</small>`}</button>`;
   }).join("") || `<span class="muted">没有符合的招。</span>`;
 }
 
-function logHtml() {
-  return events.filter((e) => e.t === "log").map((e) => {
-    const cls = /^第\d+回合：/.test(e.text) ? "round" : e.text.startsWith("贼（") ? "zei" : "";
-    return `<p class="${cls}">${esc(e.text)}</p>`;
-  }).join("");
+function appendLog(text) {
+  const log = $("#log"); if (!log) return;
+  const p = document.createElement("p");
+  p.className = /^第\d+回合：/.test(text) ? "round" : text.startsWith("贼（") ? "zei" : "";
+  p.textContent = text;
+  log.appendChild(p); log.scrollTop = log.scrollHeight;
+}
+
+function renderControls() {
+  if (!$("#battle") || !S || S.phase === "lobby") return;
+  const v = S.view, mine = S.seats[me.side];
+  $("#top").innerHTML = `<span><b>房间 ${esc(S.room)}</b>　第 ${v.round} 回合　水面高度 ${v.water_level}　${v.zei_enabled ? "用贼" : "不用贼（电脑掷概率）"}</span>
+    <span class="row">${v.zei_enabled ? `<label><input type="checkbox" id="auto" ${mine.auto_zei ? "checked" : ""}> 电脑替我出拳</label>` : ""}
+    <button id="speed">动画速度 ${stage && stage.speed > 1 ? "2×" : "1×"}</button><button id="mute">${Sfx.muted ? "声音：关" : "声音：开"}</button></span>`;
+  $("#prompt").innerHTML = promptHtml();
+  const choosing = S.need === "choose" && !playing;
+  $("#actionbox").hidden = !choosing;
+  if (!choosing) ui.sceneAction = null;
+  $("#tabs").innerHTML = TABS.map((t) => `<button data-tab="${t}" aria-pressed="${t === ui.tab}">${t}</button>`).join("");
+  $("#scenepick").innerHTML = ui.sceneAction ? `<div class="row"><b>去哪个场景？</b>${scenes.map((s) => `<button data-scene="${esc(s.name)}">${esc(s.name)}</button>`).join("")}<button>取消</button></div>` : "";
+  $("#actions").innerHTML = actionsHtml();
+}
+
+// 把还没播过的事件一条一条播出来：战报文字直接追加，其它的交给舞台做动画。
+async function pump() {
+  if (playing || !stage) return;
+  playing = true; renderControls();
+  while (stage && played < events.length) {
+    const ev = events[played++];
+    if (ev.t === "log") appendLog(ev.text);
+    else await stage.play(ev, S.view);
+  }
+  playing = false;
+  if (stage && S && S.view) {
+    stage.skipping = false;
+    stage.setModel(modelOf(S.view));          // 播完以后和服务器的局面对齐
+    $("#bench-me").innerHTML = benchHtml(me.side); $("#bench-foe").innerHTML = benchHtml(foeSide());
+  }
+  renderControls();
 }
 
 function renderBattle() {
-  const app = $("#app");
   if (!$("#battle")) {
-    app.innerHTML = `<div id="battle" style="display:grid;gap:14px">
+    $("#app").innerHTML = `<div id="battle">
       <div class="panel"><div class="row top" id="top"></div></div>
-      <div class="sides" id="sides"></div>
+      <div class="panel stagebox"><div id="stage"></div>
+        <div class="benches"><div id="bench-me"></div><div id="bench-foe"></div></div></div>
       <div id="prompt"></div>
-      <div class="panel" id="actionbox">
-        <div class="row"><div class="row tabs" id="tabs"></div><input type="text" id="search" placeholder="搜招式名字"></div>
-        <div id="scenepick"></div>
-        <div class="actions" id="actions"></div>
-      </div>
-      <div class="panel"><h2>战报</h2><div class="log" id="log"></div></div></div>`;
+      <div class="lower">
+        <div class="panel" id="actionbox">
+          <div class="row"><div class="row tabs" id="tabs"></div><input type="text" id="search" placeholder="搜招式名字"></div>
+          <div id="scenepick"></div>
+          <div class="actions" id="actions"></div>
+        </div>
+        <div class="panel logbox"><h2>战报</h2><div class="log" id="log"></div></div>
+      </div></div>`;
     $("#search").oninput = (e) => { ui.search = e.target.value.trim(); $("#actions").innerHTML = actionsHtml(); };
-    $("#tabs").onclick = (ev) => { const b = ev.target.closest("button"); if (b) { ui.tab = b.dataset.tab; renderBattle(); } };
+    $("#tabs").onclick = (ev) => { const b = ev.target.closest("button"); if (b) { ui.tab = b.dataset.tab; renderControls(); } };
     $("#actions").onclick = (ev) => {
       const b = ev.target.closest(".action"); if (!b || b.disabled) return;
       const action = S.actions.find((a) => a.id === b.dataset.action);
-      if (action.effect === "choose_scene") { ui.sceneAction = action.id; renderBattle(); } else send({ t: "choose", action: action.id });
+      if (action.effect === "choose_scene") { ui.sceneAction = action.id; renderControls(); } else send({ t: "choose", action: action.id });
     };
     $("#scenepick").onclick = (ev) => {
       const b = ev.target.closest("button"); if (!b) return;
       if (b.dataset.scene) send({ t: "choose", action: ui.sceneAction, destination: b.dataset.scene });
-      ui.sceneAction = null; renderBattle();
+      ui.sceneAction = null; renderControls();
     };
     $("#prompt").onclick = (ev) => {
       const b = ev.target.closest("button"); if (!b) return;
@@ -248,21 +285,29 @@ function renderBattle() {
       else if (b.dataset.redo) send({ t: "redo", yes: b.dataset.redo === "1" });
       else if (b.dataset.pick) send({ t: "pick", option: b.dataset.pick });
       else if (b.id === "rematch") send({ t: "rematch" });
+      else if (b.id === "skip" && stage) stage.skipping = true;
     };
     $("#top").onchange = (ev) => { if (ev.target.id === "auto") send({ t: "auto", on: ev.target.checked }); };
+    $("#top").onclick = (ev) => {
+      if (ev.target.id === "speed" && stage) { stage.speed = stage.speed > 1 ? 1 : 2.2; store.set("shai-speed", String(stage.speed)); renderControls(); }
+      if (ev.target.id === "mute") { Sfx.muted = !Sfx.muted; store.set("shai-mute", Sfx.muted ? "1" : ""); renderControls(); }
+    };
   }
-  const v = S.view, mine = S.seats[me.side];
-  $("#top").innerHTML = `<span><b>房间 ${esc(S.room)}</b>　第 ${v.round} 回合　水面高度 ${v.water_level}　${v.zei_enabled ? "用贼" : "不用贼（电脑掷概率）"}</span>
-    ${v.zei_enabled ? `<label><input type="checkbox" id="auto" ${mine.auto_zei ? "checked" : ""}> 电脑替我出拳</label>` : ""}`;
-  $("#sides").innerHTML = sideHtml(me.side) + sideHtml(me.side === "A" ? "B" : "A");
-  $("#prompt").innerHTML = promptHtml();
-  $("#actionbox").hidden = S.need !== "choose";
-  if (S.need !== "choose") ui.sceneAction = null;
-  $("#tabs").innerHTML = TABS.map((t) => `<button data-tab="${t}" aria-pressed="${t === ui.tab}">${t}</button>`).join("");
-  $("#scenepick").innerHTML = ui.sceneAction ? `<div class="row"><b>去哪个场景？</b>${scenes.map((s) => `<button data-scene="${esc(s)}">${esc(s)}</button>`).join("")}<button>取消</button></div>` : "";
-  $("#actions").innerHTML = actionsHtml();
-  const log = $("#log");
-  log.innerHTML = logHtml(); log.scrollTop = log.scrollHeight;
+  if (!stage) {
+    stage = new Stage($("#stage"), me.side, scenes);
+    stage.speed = Number(store.get("shai-speed")) > 1 ? 2.2 : 1;
+    Sfx.muted = store.get("shai-mute") === "1";
+    stage.setModel(modelOf(S.view));
+    $("#log").innerHTML = "";
+    played = 0;
+    if (events.length > 14) {                 // 中途进来（比如刷新页面）：之前的回合不重播，只把战报补上
+      for (const ev of events) if (ev.t === "log") appendLog(ev.text);
+      played = events.length;
+    }
+  }
+  $("#bench-me").innerHTML = benchHtml(me.side); $("#bench-foe").innerHTML = benchHtml(foeSide());
+  renderControls();
+  pump();
 }
 
 function render() {

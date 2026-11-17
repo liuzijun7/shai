@@ -23,6 +23,14 @@ rooms: dict[str, Room] = {}
 sockets: dict[tuple[str, str], WebSocket] = {}      # (房间号, 哪一方) -> 连接
 
 
+def _art_names() -> list[str]:
+    """本机有图的人物。人物图不在仓库里，没有图的人物网页用圆圈加名字顶替。"""
+    folder = os.path.join(WEB_DIR, "assets", "characters")
+    if not os.path.isdir(folder):
+        return []
+    return sorted(name[:-4] for name in os.listdir(folder) if name.endswith(".png"))
+
+
 def _new_code() -> str:
     while True:
         code = f"{random.randint(0, 9999):04d}"
@@ -64,7 +72,8 @@ async def websocket_endpoint(socket: WebSocket) -> None:
                         await old.close()
                     sockets[(room.code, side)] = socket
                     await socket.send_json({"t": "joined", "room": room.code, "side": side, "token": token,
-                                            "characters": character_catalog(), "scenes": list(SCENES)})
+                                            "characters": character_catalog(), "scenes": [{"name": n, "height": SCENES[n]["height"]} for n in SCENES],
+                                            "art": _art_names()})
                     room.drive()
                 elif room is None or side is None:
                     raise RoomError("请先进入房间。")
@@ -83,4 +92,13 @@ async def websocket_endpoint(socket: WebSocket) -> None:
             await _broadcast(room)
 
 
-app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
+class FreshStatic(StaticFiles):
+    """网页文件每次都向服务器确认是不是最新的，这样更新代码后不用清浏览器缓存。"""
+
+    async def get_response(self, path: str, scope: Any):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/", FreshStatic(directory=WEB_DIR, html=True), name="web")
