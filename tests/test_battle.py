@@ -105,9 +105,21 @@ class BasicRules(unittest.TestCase):
 
 class OrderAndZei(unittest.TestCase):
     def test_no_zei_when_order_does_not_matter(self):
+        b = Battle(["武圣"], ["饕餮"], seed=1, true_body=False)
+        b.choose("A", "0")
+        b.choose("B", "0")
+        self.assertIsNone(b.pending)
+        self.assertEqual(b.fighter("B").hp, 150000 - 10000)
+        self.assertEqual(b.fighter("A").hp, 100000 - 10000)
+
+    def test_later_zei_does_not_force_an_order_zei(self):
+        # 拳术宗师有暴击（要贼）。双方都是普通攻击，谁先谁后结果一样，所以不为先后手贼，只为暴击贼。
         b = Battle(["拳术宗师"], ["饕餮"], seed=1, true_body=False)
         b.choose("A", "0")
         b.choose("B", "0")
+        self.assertEqual(b.pending["purpose"], "chance")
+        self.assertIn("双方同一档出手，先后不影响结果。", b.log)
+        b.answer("B")               # 暴击没出
         self.assertIsNone(b.pending)
         self.assertEqual(b.fighter("B").hp, 150000 - 15000)   # 蛮力 3：加 50%
         self.assertEqual(b.fighter("A").hp, 100000 - 5000)    # 铁布衫 3：只受一半
@@ -391,3 +403,33 @@ class Divination(unittest.TestCase):
         self.assertIn("A的占卜大师占卜：对手这回合会用【魔法】的招。", b.log)   # 双方都看得到
         self.assertIn("A的占卜大师没有占中。", b.log)
         self.assertEqual(b.fighter("A").max_hp, before)
+
+
+class LearningInner(unittest.TestCase):
+    def test_learning_takes_the_turn_and_levels_up_at_thresholds(self):
+        b = Battle(["武圣"], ["饕餮"], seed=1, true_body=False)
+        for _ in range(4):
+            play(b, "learn:幸运", "d1")
+        self.assertEqual(b.fighter("A").learn_progress["幸运"], 4)
+        self.assertEqual(b.fighter("A").inner_level("幸运"), 0)
+        play(b, "learn:幸运", "d1")
+        self.assertEqual(b.fighter("A").inner_level("幸运"), 1)       # 学满 5 下升到 1 级
+
+    def test_some_characters_learn_faster(self):
+        b = Battle(["陶渊明"], ["饕餮"], seed=1, true_body=False)
+        play(b, "learn:蛮力", "d1")
+        play(b, "learn:蛮力", "d1")
+        self.assertEqual(b.fighter("A").learn_progress["蛮力"], 6)     # 陶渊明学一下算三下
+        self.assertEqual(b.fighter("A").inner_level("蛮力"), 1)
+
+    def test_only_three_extra_kinds(self):
+        b = Battle(["武圣"], ["饕餮"], seed=1, true_body=False)
+        for name in ("幸运", "蛮力", "铁布衫"):
+            play(b, f"learn:{name}", "d1")
+        self.assertFalse(legal(b, "A")["learn:幻影"]["legal"])
+        self.assertTrue(legal(b, "A")["learn:幸运"]["legal"])           # 已经在学的可以接着学
+
+    def test_crit_doubles_damage(self):
+        b = Battle(["拳术宗师"], ["欧阳修"], seed=1, true_body=False)   # 拳术宗师：蛮力 3、暴击 3
+        play(b, "0", "d2", zei="A")
+        self.assertEqual(b.fighter("B").hp, 300000 - 10000 * 1.5 * 2)

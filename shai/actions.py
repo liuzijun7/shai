@@ -23,6 +23,8 @@ class Actions:
         L = self.label
 
         # ----- 只和自己有关的动作 -----
+        if effect == "learn":
+            return self.learn(actor, spec["inner"])
         if effect == "collect_oxygen":
             return self.collect(actor, "氧气", reps, scene_multiplier=SCENES[actor.scene].get("oxygen_multiplier", 1))
         if effect == "collect_supernova":

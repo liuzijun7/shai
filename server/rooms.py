@@ -310,7 +310,8 @@ class Room:
     @staticmethod
     def _action_view(action: dict[str, Any]) -> dict[str, Any]:
         keys = ("id", "name", "attributes", "damage", "statuses", "defense", "distance", "target",
-                "effect", "description", "character", "action_kind", "tier", "legal", "reason")
+                "effect", "description", "character", "action_kind", "tier", "legal", "reason",
+                "inner", "progress", "next", "level")
         return {k: action.get(k) for k in keys}
 
 

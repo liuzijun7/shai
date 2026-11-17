@@ -15,7 +15,7 @@ function animOf(ev) {
   if (SIGNATURE_ANIMS[ev.id]) return SIGNATURE_ANIMS[ev.id];
   const a = ev.attributes || [];
   if (["switch", "defense", "skip"].includes(ev.action_kind)) return "none";
-  if (["collect", "build", "scene"].includes(ev.action_kind)) return "collect";
+  if (["collect", "build", "scene", "learn"].includes(ev.action_kind)) return "collect";
   if (ev.target === ev.side) return "self";
   if (BEAM_EFFECTS.includes(ev.effect)) return "beam";
   if (a.includes("神技")) return "shen";
@@ -320,6 +320,11 @@ class Stage {
         this.pop(ev.side, ev.why + "：" + ev.new, "heal");
         await this.flash(ev.side, "#d4a514");
         return this.wait(300);
+      case "learn":
+        if (ev.leveled) Sfx.heal();
+        this.pop(ev.side, ev.leveled ? ev.name + " 升到 " + ev.level + " 级" : "学" + ev.name + " " + ev.progress, ev.leveled ? "heal" : "note");
+        return this.wait(300);
+      case "crit": this.pop(ev.side, "暴击", "hurt"); return this.wait(150);
       case "zei": Sfx.zei(); return;
       case "phase": return this.wait(200);
       case "end": Sfx.win(); return this.announce("对战结束", 900);

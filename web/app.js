@@ -28,7 +28,7 @@ let playing = false;
 const ui = { picked: [], tab: "全部", search: "", sceneAction: null, wanted: null };
 const HAND_NAMES = ["石头", "剪刀", "布"];
 const HAND_GLYPH = { "石头": "✊", "剪刀": "✌", "布": "✋" };
-const TABS = ["全部", "技能", "神技", "防御", "物品", "专属", "换人"];
+const TABS = ["全部", "技能", "神技", "防御", "物品", "专属", "内功", "换人"];
 
 function toast(text) {
   const el = $("#toast");
@@ -190,6 +190,7 @@ function promptHtml() {
 
 function category(a) {
   if (a.action_kind === "switch") return "换人";
+  if (a.action_kind === "learn") return "内功";
   if (a.action_kind === "defense") return "防御";
   if (a.attributes.includes("神技")) return "神技";
   if (a.character) return "专属";
@@ -204,7 +205,9 @@ function actionsHtml() {
   return list.map((a) => {
     const info = [a.attributes.join("+") || (a.action_kind === "skill" ? "无属性" : ""), a.damage ? "伤害 " + a.damage / 10000 + " 万" : "",
       a.defense ? "防 " + a.defense : "", tier(a.tier)].filter(Boolean).join(" · ");
-    const extra = (a.statuses || []).map(([n, t]) => n + t).join(" ");
+    const extra = a.action_kind === "learn"
+      ? "现在 " + a.level + " 级，学了 " + a.progress + " 下" + (a.next ? "，到 " + a.next + " 下升级" : "")
+      : (a.statuses || []).map(([n, t]) => n + t).join(" ");
     const color = ATTR_COLOR[a.attributes[0]] || "transparent";
     return `<button class="action" style="border-left-color:${color}" data-action="${esc(a.id)}" ${a.legal ? "" : "disabled"} title="${esc(a.legal ? a.description || "" : a.reason)}">
       <b>${esc(a.name)}</b><small>${esc(info)}</small>${extra ? `<small>${esc(extra)}</small>` : ""}${a.legal ? "" : `<small>${esc(a.reason)}</small>`}</button>`;

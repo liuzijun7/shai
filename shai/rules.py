@@ -13,8 +13,8 @@ from math import floor
 from typing import Any
 
 from .data import (
-    ALL_INNER_NAMES, CHARACTERS, CONTROL_STATUSES, DAMAGE_STATUSES, INNER_VALUES,
-    MAX_INNER_LEVEL, SCENES, SELF_BUFFS, VERTICAL_SCENES,
+    ALL_INNER_NAMES, CHARACTERS, CONTROL_STATUSES, DAMAGE_STATUSES, INNER_VALUES, LEARN_MULTIPLIER,
+    LEARN_THRESHOLDS, MAX_INNER_LEVEL, MAX_LEARNED_INNER, SCENES, SELF_BUFFS, VERTICAL_SCENES,
 )
 from .model import Fighter, Parasite, RuleError, Status
 
@@ -117,6 +117,11 @@ class Rules:
                 multiplier *= 2
             if "魔法" in spec["attributes"] and "魔法2" in self.traits(actor):
                 multiplier *= 2
+            crit = actor.inner_level("暴击")
+            if crit and self._chance(INNER_VALUES["暴击"][crit], actor.side, f"{self.label(actor)}的暴击"):
+                multiplier *= 2
+                self._emit("crit", side=actor.side)
+                self._log(f"{self.label(actor)}打出暴击，伤害翻倍。")
             amount = int(round(base * multiplier))
             iron = target.inner_level("铁布衫")
             if iron:
@@ -492,6 +497,38 @@ class Rules:
         if actor.counters["underwater_turns"] % 3 == 0:
             self.move_vertical(actor, 1)
 
+    # ---------- 学内功 ----------
+
+    def learned_level(self, name: str, progress: int) -> int:
+        return min(MAX_INNER_LEVEL, sum(1 for need in LEARN_THRESHOLDS[name] if progress >= need))
+
+    def learn_slots(self, fighter: Fighter) -> int:
+        """除了开局自带的以外，还能学几种内功。"""
+        return MAX_LEARNED_INNER + int(INNER_VALUES["内功栏"].get(fighter.inner.get("内功栏", 0), 0))
+
+    def learn_reason(self, fighter: Fighter, name: str) -> str | None:
+        if int(fighter.inner.get(name, 0)) >= min(MAX_INNER_LEVEL, len(LEARN_THRESHOLDS[name])):
+            return "这种内功已经学满了"
+        innate = self.char(fighter)["inner"]
+        extra = [n for n in fighter.learn_progress if n not in innate]
+        if name not in innate and name not in extra and len(extra) >= self.learn_slots(fighter):
+            return f"除了自带的，最多再学 {self.learn_slots(fighter)} 种内功"
+        return None
+
+    def learn(self, fighter: Fighter, name: str) -> None:
+        gain = LEARN_MULTIPLIER.get(fighter.name, 1) * int(SCENES[fighter.scene].get("learn_multiplier", 1))
+        progress = fighter.learn_progress.get(name, 0) + gain
+        fighter.learn_progress[name] = progress
+        level = self.learned_level(name, progress)
+        leveled = level > int(fighter.inner.get(name, 0))
+        if leveled:
+            fighter.inner[name] = level
+        need = next((n for n in LEARN_THRESHOLDS[name] if n > progress), None)
+        self._emit("learn", side=fighter.side, name=name, progress=progress,
+                   level=int(fighter.inner.get(name, 0)), leveled=leveled)
+        self._log(f"{self.label(fighter)}学{name}，学了{progress}下"
+                  + (f"，升到{level}级。" if leveled else (f"，到{need}下升级。" if need else "。")))
+
     # ---------- 进化和衰变 ----------
 
     def transform(self, fighter: Fighter, new_name: str, why: str) -> None:
@@ -550,5 +587,7 @@ class Rules:
         fighter.inner = dict(fighter.initial_inner)
         if fighter.name == "武圣" and fighter.lives_remaining < fighter.lives_total:
             fighter.inner.update({"幸运": 3, "大难不死": 2})
+        for name, progress in fighter.learn_progress.items():      # 学过的内功跟着人物，不随这条命丢掉
+            fighter.inner[name] = max(int(fighter.inner.get(name, 0)), self.learned_level(name, progress))
         self._emit("respawn", side=fighter.side, scene=fighter.scene, height=fighter.scene_height, **self.vitals(fighter))
         self._log(f"{self.label(fighter)}进入下一条命，体力、盾牌、状态、内功、场景、辐射和物品已重置。")

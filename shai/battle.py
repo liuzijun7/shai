@@ -23,7 +23,8 @@ from typing import Any
 
 from .actions import Actions
 from .data import (
-    CHARACTERS, CHARACTER_NAME_TO_ID, FIRST_STRIKE_IDS, SCENES, SEAL_BY_ATTRIBUTE, SELF_BUFFS, SKILLS,
+    CHARACTERS, CHARACTER_NAME_TO_ID, FIRST_STRIKE_IDS, LEARN_THRESHOLDS, SCENES, SEAL_BY_ATTRIBUTE,
+    SELF_BUFFS, SKILLS,
     TIER_FIRST, TIER_LINGBO4, TIER_NORMAL, TIER_SHEN, TIER_SWITCH, TRUE_BODY_ID, UNBLOCKABLE_CHARACTERS,
     character_skill_ids, is_signature,
 )
@@ -86,6 +87,8 @@ class Battle(Rules, Actions, TurnStart):
         self._count = 0
         self._mute = False                    # 试算先后顺序时不产生事件
         self._want_start = False              # 这一回合结算完了，下一回合的“回合开始”单独算一段
+        self._probe_assign: dict[str, Any] | None = None   # 试算时，后面那些贼假设的结果
+        self._probe_seen: dict[str, int] = {}
         self.history: list[dict[str, Any]] = []   # 每一步输入，用来回放
 
         names = {side: self.fighter(side).name for side in SIDES}
@@ -126,6 +129,17 @@ class Battle(Rules, Actions, TurnStart):
             spec = _OXYGEN if action_id == "sys_collect_oxygen" else SKILLS[action_id]
             reason = blocked_all or self._illegal_reason(actor, target, spec)
             result.append({**spec, "tier": self._tier(actor, spec), "legal": reason is None, "reason": reason or ""})
+        for name, needs in LEARN_THRESHOLDS.items():          # 学内功：占这个回合的出招
+            reason = blocked_all or self.learn_reason(actor, name)
+            progress = actor.learn_progress.get(name, 0)
+            result.append({
+                "id": f"learn:{name}", "name": f"学{name}", "attributes": (), "damage": 0, "statuses": (),
+                "defense": None, "distance": 0, "target": "self", "effect": "learn", "inner": name,
+                "description": "学一次内功占用这个回合的出招。", "character": None, "action_kind": "learn",
+                "tier": TIER_NORMAL, "legal": reason is None, "reason": reason or "",
+                "progress": progress, "next": next((n for n in needs if n > progress), None),
+                "level": int(actor.inner.get(name, 0)),
+            })
         for index in self.players[side].bench():
             other = self.players[side].team[index]
             result.append({
@@ -196,13 +210,11 @@ class Battle(Rules, Actions, TurnStart):
             guard += 1
             prints = []
             self._mute = True
-            for first in request["sides"]:      # 两种先后顺序各试算一遍
-                self._forced_first = first
-                prints.append(self._attempt()[2])
-            self._forced_first, self._mute = None, False
+            same = self._order_irrelevant(request, {}, [48])
+            self._forced_first, self._mute, self._probe_assign = None, False, None
             self._restore(self._snap)
-            if prints[0] is None or prints[0] != prints[1]:
-                break                           # 先后有区别（或者试算中途还要贼）：要贼
+            if not same:
+                break                           # 先后有区别：要贼
             self._decisions.insert(request["index"], {"kind": "order", "value": request["sides"][0], "auto": True})
             status, request, _ = self._attempt()
         if status == "done":
@@ -215,11 +227,31 @@ class Battle(Rules, Actions, TurnStart):
         else:
             self.pending = self._public_request(request)
 
+    def _order_irrelevant(self, request: dict[str, Any], assumed: dict[str, Any], budget: list[int]) -> bool:
+        """两种先后顺序的结果是不是一样。
+
+        试算中途如果还要贼（比如闪避、暴击），就把那次贼的每一种结果都假设一遍。
+        只有在每一种假设下两种顺序的结果都一样，才算“先后无所谓”。
+        """
+        if budget[0] <= 0:
+            return False                        # 情况太多，不再细算，保守地当作有区别
+        budget[0] -= 1
+        prints = []
+        for first in request["sides"]:
+            self._forced_first, self._probe_assign = first, assumed
+            status, need, fingerprint = self._attempt()
+            if status == "need":
+                values = list(need["sides"]) + ([None] if need.get("mode") == "single" else [])
+                return all(self._order_irrelevant(request, {**assumed, need["label"]: v}, budget) for v in values)
+            prints.append(fingerprint)
+        return prints[0] == prints[1]
+
     def _attempt(self) -> tuple[str, dict[str, Any] | None, str | None]:
         """从存的局面把这一段完整算一次。返回 (状态, 问题, 局面指纹)。"""
         self._restore(self._snap)
         self._cursor = 0
         self._count = 0
+        self._probe_seen = {}
         try:
             if self._unit == "open":
                 self._open()
@@ -285,6 +317,15 @@ class Battle(Rules, Actions, TurnStart):
                 raise RuntimeError("决定的记录和结算的顺序对不上。")
             self._cursor += 1
             return decision
+        if self._forced_first is not None and kind == "zei":
+            # 试算：这次贼还没有真的发生，按假设的结果往下算；没有假设过就报告出来，让外面逐种结果去试
+            reason = request.get("reason", "")
+            seen = self._probe_seen.get(reason, 0)
+            self._probe_seen[reason] = seen + 1
+            label = f"{reason}#{seen}"
+            if self._probe_assign is not None and label in self._probe_assign:
+                return {"kind": kind, "value": self._probe_assign[label]}
+            raise NeedDecision({"kind": kind, "index": self._cursor, "label": label, **request})
         raise NeedDecision({"kind": kind, "index": self._cursor, **request})
 
     def _rezei(self, a: str, b: str) -> dict[str, int]:
@@ -642,6 +683,7 @@ class Battle(Rules, Actions, TurnStart):
             "parasites": {n: {"count": p.count, "layer": p.layer} for n, p in f.parasites.items()},
             "resources": dict(f.resources), "radiation": f.radiation, "defeated": f.defeated,
             "used_shen": sorted(f.used_shen), "is_true_body": f.is_true_body, "entered": f.entered,
+            "learn_progress": dict(f.learn_progress),
         }
 
     def _move_data(self, actor: Fighter, target: Fighter, spec: dict[str, Any]) -> dict[str, Any]:
