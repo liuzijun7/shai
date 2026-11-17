@@ -30,6 +30,7 @@ from .data import (
 )
 from .model import Fighter, NeedDecision, Player, RuleError, Status
 from .rules import Rules
+from .forms import Forms
 from .turnstart import TurnStart
 
 SIDES = ("A", "B")
@@ -51,7 +52,7 @@ class _ProbeStop(Exception):
     """试算两种先后顺序时，算完这一回合就停。"""
 
 
-class Battle(Rules, Actions, TurnStart):
+class Battle(Rules, Actions, TurnStart, Forms):
     VERSION = "1.0-dev"
 
     def __init__(self, team_a: list[str], team_b: list[str], seed: int | None = None,
@@ -511,7 +512,8 @@ class Battle(Rules, Actions, TurnStart):
         if self._forced_first is not None:
             raise _ProbeStop()
 
-        # 7. 倒下的人物换下一个；判断胜负；进入下一回合
+        # 7. 进化和衰变；倒下的人物换下一个；判断胜负；进入下一回合
+        self.form_phase()
         self._replace_fallen()
         if self._check_end():
             return

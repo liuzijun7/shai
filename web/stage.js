@@ -284,6 +284,7 @@ class Stage {
         if (f) { f.parasites[ev.name] = { count: (f.parasites[ev.name] ? f.parasites[ev.name].count : 0) + ev.count }; this.hud(ev.side); }
         this.pop(ev.side, ev.name + " ×" + ev.count, "bad");
         return this.wait(260);
+      case "ray": Sfx.cast(); this.pop(ev.side, ev.ray + " 射线", "bad"); await this.flash(ev.side, "#b6f04a"); return;
       case "radiation":
         if (f) { f.radiation = ev.total; this.hud(ev.side); }
         this.pop(ev.side, "辐射 +" + ev.amount, "bad");

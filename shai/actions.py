@@ -143,10 +143,7 @@ class Actions:
             if target.has_status("无敌"):
                 self._log(f"{L(target)}处于无敌，伽马射线无效。")
                 return
-            self.add_radiation(target, 15, actor.side, "伽马射线")
-            if not target.defeated and self._chance(0.125, actor.side, f"{L(actor)}的伽马射线是不是臭伽马"):
-                self.apply_status(target, "昏睡", 10, actor.side, forced=True)
-                self._log("臭伽马触发，强制昏睡。")
+            self.gamma_ray(actor, target)
             return self.after_special(actor, spec)
         if effect == "sulfuric_acid" and actor.name in {"生化大师", "猪带小天王"}:
             if self._chance(0.5, actor.side, f"{L(actor)}的硫酸秒杀"):

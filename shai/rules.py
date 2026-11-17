@@ -532,17 +532,30 @@ class Rules:
     # ---------- 进化和衰变 ----------
 
     def transform(self, fighter: Fighter, new_name: str, why: str) -> None:
-        """把人物变成另一个形态（进化或衰变）。体力按新形态回满，内功取新旧两边较高的等级。"""
+        """把人物变成另一个形态。
+
+        进化：体力按新形态回满，内功取新旧两边较高的等级。
+        衰变：内功退回新形态自带的（自己学来的保留）；体力不回，超过新上限的部分去掉。
+        """
         from .data import CHARACTER_NAME_TO_ID
         old_name, data = fighter.name, CHARACTERS[CHARACTER_NAME_TO_ID[new_name]]
+        decay = why == "衰变"
         fighter.character_id, fighter.name = data["id"], data["name"]
-        fighter.max_hp, fighter.hp, fighter.distance = data["hp"], data["hp"], data["distance"]
-        for name, level in data["inner"].items():
-            fighter.inner[name] = max(int(fighter.inner.get(name, 0)), level)
-        fighter.initial_inner = dict(fighter.inner)
+        fighter.max_hp, fighter.distance = data["hp"], data["distance"]
+        if decay:
+            fighter.hp = min(int(fighter.hp), int(data["hp"]))
+            fighter.inner = dict(data["inner"])
+            for name, progress in fighter.learn_progress.items():
+                fighter.inner[name] = max(int(fighter.inner.get(name, 0)), self.learned_level(name, progress))
+        else:
+            fighter.hp = int(data["hp"])
+            for name, level in data["inner"].items():
+                fighter.inner[name] = max(int(fighter.inner.get(name, 0)), level)
+        fighter.initial_inner = dict(data["inner"])
         fighter.counters["form_turns"] = 0
+        fighter.counters["decayed"] = decay
         self._emit("evolve", side=fighter.side, old=old_name, new=new_name, why=why, **self.vitals(fighter))
-        self._log(f"{fighter.side}的{old_name}{why}成{new_name}，体力回满。")
+        self._log(f"{fighter.side}的{old_name}{why}成{new_name}" + ("。" if decay else "，体力回满。"))
 
     # ---------- 死亡和多条命 ----------
 
