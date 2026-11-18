@@ -104,6 +104,17 @@ class AimAtYourself(unittest.TestCase):
         self.assertTrue(b.fighter("A").defeated)
 
 
+class DeathEffects(unittest.TestCase):
+    def test_everyone_sleeps_three_turns_when_lingli_dies(self):
+        b = fight(["灵力圣使", "武圣"], "陶渊明")           # 陶渊明免疫不良特效，但这个昏睡是强制的
+        b.fighter("A").hp = 1
+        play(b, "d2", "0")
+        self.assertEqual(b.fighter("A").name, "武圣")
+        self.assertIn("A的灵力圣使倒下，全场强制昏睡3回合。", b.log)
+        self.assertIn("B的陶渊明获得昏睡（3回合）。", b.log)
+        self.assertTrue(b.fighter("B").has_status("昏睡"))
+
+
 class BorrowedInner(unittest.TestCase):
     def test_song_lian_borrows_only_from_the_fighter_on_the_field(self):
         b = fight("宋濂", ["巫师", "武圣"])
@@ -259,6 +270,17 @@ class ClearerInformation(unittest.TestCase):
         b.choose("B", "d2")
         self.assertIsNone(b.pending)                       # 不用为“躲不躲得开”贼
         self.assertIn("B的陶渊明免疫不良特效，【昏睡咒】对他没有用。", b.log)
+
+    def test_no_order_zei_when_either_order_ends_the_game_the_same_way(self):
+        # 甲先出手会把乙打死，乙的招就出不来；乙先出手，甲先被打昏睡再把乙打死。两种顺序都是乙全灭，不用贼先后。
+        b = fight("武圣", "武圣")
+        foe = b.fighter("B")
+        foe.lives_remaining, foe.hp = 1, 5000
+        b.choose("A", "30")                                # 悬心拳
+        b.choose("B", "12")                                # 昏睡咒
+        self.assertTrue(b.done)
+        self.assertEqual(b.winner, "A")
+        self.assertFalse(any("谁先出手" in line for line in b.log))
 
     def test_floating_up_says_why(self):
         b = fight("武圣", "欧阳修")

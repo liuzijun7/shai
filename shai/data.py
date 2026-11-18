@@ -16,7 +16,7 @@ VERTICAL_SCENES = _gd.VERTICAL_SCENES
 SEAL_BY_ATTRIBUTE = _gd.SEAL_BY_ATTRIBUTE
 CONTROL_STATUSES = _gd.CONTROL_STATUSES
 DAMAGE_STATUSES = _gd.DAMAGE_STATUSES
-SELF_BUFFS = _gd.SELF_BUFFS
+SELF_BUFFS = set(_gd.SELF_BUFFS) | {"心眼"}      # 给自己加的好状态
 ALL_INNER_NAMES = _gd.ALL_INNER_NAMES
 
 MAX_INNER_LEVEL = 4  # 雨晨：内功封顶 4 级
@@ -97,6 +97,10 @@ _extra("x12", "九十二三弑", ["物理"], 9000, [("封神", 5)], 3, 0, effect
        description="一半的可能让对手昏睡 3 回合；累计辐射 1 次。")
 _extra("x13", "三聚氰胺", ["化学", "物品"], 0, [], 1, 0, effect="melamine",
        description="对手手里的万灵丹全部失效。")
+
+# 心眼（雨晨）：魔法。5 回合内自己所有的招必中，对面的虚空神术躲不开。
+_extra("x14", "心眼", ["魔法"], 0, [("心眼", 5)], None, 0, effect="self_status", target="self",
+       description="5 回合内自己所有的招必中，对面的虚空神术躲不开。")
 
 EXTRA_SKILL_IDS = tuple(key for key in SKILLS if key.startswith("x"))
 

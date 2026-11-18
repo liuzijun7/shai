@@ -112,6 +112,17 @@ class ExtraMoves(unittest.TestCase):
         play(b, "x12", "d1", zei="B")
         self.assertNotIn("B的武圣获得昏睡（3回合）。", b.log)
 
+    def test_xinyan_makes_every_move_hit_for_five_turns(self):
+        b = fight(b="陶渊明")                               # 陶渊明有虚空神术 3
+        play(b, "x14", "d1")
+        self.assertTrue(b.fighter("A").has_status("心眼"))
+        for _ in range(5):
+            b.choose("A", "0")
+            b.choose("B", "d2")
+            self.assertIsNone(b.pending)                    # 不用为躲不躲得开贼
+        self.assertEqual(b.fighter("B").hp, 150000 - 5 * 10000)
+        self.assertFalse(b.fighter("A").has_status("心眼"))  # 5 回合用完了
+
     def test_melamine_spoils_panacea(self):
         b = fight()
         b.fighter("B").resources["万灵丹"] = 3
@@ -121,7 +132,8 @@ class ExtraMoves(unittest.TestCase):
     def test_every_extra_move_has_a_description_or_plain_effect(self):
         for key, spec in SKILLS.items():
             if key.startswith("x"):
-                self.assertIn(spec["defense"], (1, 2, 3, 4), spec["name"])
+                if spec["target"] == "enemy":
+                    self.assertIn(spec["defense"], (1, 2, 3, 4), spec["name"])
 
 
 if __name__ == "__main__":

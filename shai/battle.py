@@ -360,6 +360,13 @@ class Battle(Rules, Actions, TurnStart, Forms):
         self.rng = self._main_rng
 
     def _fingerprint(self) -> str:
+        """这一回合算完以后的局面，用来比较“谁先出手”有没有区别。
+
+        有一方已经全灭的话，这一局就结束了，只比“谁全灭了”：别的细节（比如赢的人最后有没有被打昏睡）不算区别。
+        """
+        lost = [side for side in SIDES if not self.players[side].alive_any()]
+        if lost:
+            return "over:" + ",".join(lost)
         state = {"players": {s: [self._fighter_view(f) for f in p.team] + [p.active] for s, p in self.players.items()},
                  "water": self.water_level}
         return json.dumps(state, ensure_ascii=False, sort_keys=True, default=str)

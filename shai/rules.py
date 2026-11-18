@@ -50,7 +50,7 @@ class Rules:
 
     def skill_hits(self, actor: Fighter, target: Fighter, spec: dict[str, Any]) -> bool:
         """这一招打不打得中。没打中的话在这里把原因写进战报。神技必中（雨晨）。打自己不用躲。"""
-        if actor is target:
+        if actor is target or actor.has_status("心眼"):
             return True
         if "必中" in self.traits(actor) or spec["id"] in SURE_HIT_IDS or "神技" in spec["attributes"]:
             return True
@@ -271,7 +271,7 @@ class Rules:
                 return False
             if name in DAMAGE_STATUSES:
                 layer = "shield"
-        if name == "昏睡" and name in target.statuses:
+        if name == "昏睡" and name in target.statuses and not forced:
             self._log(f"{self.label(target)}已经昏睡，新的昏睡不刷新。")
             return False
         existing = target.statuses.get(name)
@@ -649,10 +649,20 @@ class Rules:
             fighter.defeated = True
             self._emit("life_lost", side=fighter.side, defeated=True, **self.vitals(fighter))
             self._log(f"{self.label(fighter)}因{reason}失去全部生命。")
+            self.on_defeated(fighter)
             return
         self._emit("life_lost", side=fighter.side, defeated=False, **self.vitals(fighter))
         self._log(f"{self.label(fighter)}因{reason}失去一条命，剩余{fighter.lives_remaining}条。")
         self.reset_life(fighter)
+
+    def on_defeated(self, fighter: Fighter) -> None:
+        """人物彻底倒下的时候触发的效果。"""
+        if fighter.name == "灵力圣使":
+            # 本子 ⑨：“死了全场 G×3”。雨晨：这个昏睡是强制的，任何效果都过滤不掉。
+            foe = self.fighter(self.other(fighter.side))
+            if foe is not fighter and not foe.defeated:
+                self._log(f"{self.label(fighter)}倒下，全场强制昏睡3回合。")
+                self.apply_status(foe, "昏睡", 3, fighter.side, forced=True)
 
     def reset_life(self, fighter: Fighter) -> None:
         fighter.hp = int(fighter.max_hp)
