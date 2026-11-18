@@ -54,6 +54,8 @@ LEARN_MULTIPLIER = {"陶渊明": 3, "宋濂": 3, "欧阳修": 5}                
 
 SKILLS = copy.deepcopy(_gd.SKILLS)
 
+SKILLS["12"]["attributes"] = ("特技",)   # 雨晨：昏睡咒是特技，不是魔法（本子也写的是 T）
+
 # 纵目青铜怪的换血是一个要选的招，不是每回合自动（雨晨）。
 SKILLS["c_swap_hp"] = _gd.skill(
     "c_swap_hp", "换血", distance=12, effect="swap_hp", character="纵目青铜怪",

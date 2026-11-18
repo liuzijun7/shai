@@ -590,16 +590,15 @@ class Battle(Rules, Actions, TurnStart, Forms):
         for side in order:
             self.rng = streams[side]
             actor, target, spec = self.fighter(side), self.fighter(self.other(side)), specs[side]
+            # 雨晨：一回合里两边选好的招都会打出来。就算先被对面打死了、或者丢了一条命，这一招照样出。
+            # （只有被先手封住的招会憋回去。）
             if actor.defeated:
-                self._log(f"{self.label(actor)}已经倒下，行动取消。")
-                continue
+                self._log(f"{self.label(actor)}虽然已经倒下，这回合选好的【{spec['name']}】照样打出来。")
+            elif actor.lives_remaining < entries[side]["lives"]:
+                self._log(f"{self.label(actor)}虽然丢了一条命，这回合选好的【{spec['name']}】照样打出来。")
             if side in void:
                 self._emit("cancel", side=side, skill=spec["name"], why="人物被换走")
                 self._log(f"{side}场上的人物被换成了{actor.name}，原来选的【{spec['name']}】出不了：{void[side]}。")
-                continue
-            if actor.lives_remaining < entries[side]["lives"]:
-                self._emit("cancel", side=side, skill=spec["name"], why="失去当前命")
-                self._log(f"{self.label(actor)}已经失去选招时的那条命，原行动取消。")
                 continue
             if self._is_sealed(actor, spec) and not self._unblockable(actor, spec):
                 self._emit("sealed", side=side, skill=spec["name"])
@@ -626,6 +625,8 @@ class Battle(Rules, Actions, TurnStart, Forms):
                 self._emit("move", **self._move_data(actor, target, spec))
             self._log(f"{self.label(actor)}使用【{spec['name']}】。")
             self.resolve_action(actor, target, spec, entries[side]["destination"])
+            for key, amount in actor.resources.items():          # 丢了一条命以后东西清零了，照样出的招不能把数量扣成负的
+                actor.resources[key] = max(0, amount)
         self.rng = self._main_rng
         for side in SIDES:
             if specs[side]["action_kind"] == "defense" and specs[side]["effect"] != "block_divine":

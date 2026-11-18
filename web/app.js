@@ -138,12 +138,49 @@ async function loadReplayList() {
       const side = (s) => `${esc(r.names[s])}（${esc(r.teams[s].join("、"))}）`;
       const result = r.winner ? esc(r.names[r.winner]) + " 赢" : "平局";
       return `<div class="replayrow"><div><b>${when(r.ended_at)}</b>　${result}，${r.rounds} 回合<br><span class="muted">${side("A")} 对 ${side("B")}</span></div>
-        <div class="row"><button data-replay="${esc(r.id)}">看回放</button><a href="api/replays/${encodeURIComponent(r.id)}/log">文字战报</a></div></div>`;
+        <div class="row"><button data-replay="${esc(r.id)}">看回放</button><button data-log="${esc(r.id)}">文字战报</button></div></div>`;
     }).join("");
-    box.onclick = (ev) => { const b = ev.target.closest("button[data-replay]"); if (b) openReplay(b.dataset.replay); };
+    box.onclick = (ev) => {
+      const b = ev.target.closest("button"); if (!b) return;
+      if (b.dataset.replay) openReplay(b.dataset.replay); else if (b.dataset.log) showSavedLog(b.dataset.log);
+    };
   } catch (e) {
     if ($("#replaylist")) box.textContent = "读不到以前的对局。";
   }
+}
+
+// ---------- 能复制的文字框 ----------
+
+// 弹出一个文字框，里面的字可以直接选中复制，也可以点“复制全部”。
+function showText(title, text) {
+  let box = $("#textbox");
+  if (!box) {
+    box = document.createElement("div"); box.id = "textbox";
+    box.innerHTML = `<div class="panel textpanel"><div class="row"><h2></h2><button class="primary" id="copyall">复制全部</button><button id="closetext">关闭</button></div>
+      <textarea readonly spellcheck="false"></textarea></div>`;
+    document.body.appendChild(box);
+    box.onclick = async (ev) => {
+      const area = $("textarea", box);
+      if (ev.target === box || ev.target.id === "closetext") { box.hidden = true; return; }
+      if (ev.target.id !== "copyall") return;
+      area.focus(); area.select();
+      try { await navigator.clipboard.writeText(area.value); } catch (e) { try { document.execCommand("copy"); } catch (e2) { /* 复制不了就让人自己按 Ctrl+C，文字已经全选了 */ } }
+      ev.target.textContent = "已复制";
+      setTimeout(() => { ev.target.textContent = "复制全部"; }, 1500);
+    };
+  }
+  $("h2", box).textContent = title;
+  $("textarea", box).value = text;
+  box.hidden = false;
+  $("textarea", box).scrollTop = 0;
+}
+
+async function showSavedLog(id) {
+  try {
+    const r = await fetch("api/replays/" + encodeURIComponent(id) + "/log");
+    if (!r.ok) throw new Error(id);
+    showText("文字战报", await r.text());
+  } catch (e) { toast("这一局的战报读不出来。"); }
 }
 
 // ---------- 回放 ----------
@@ -306,11 +343,11 @@ function promptHtml() {
   if (replay) {
     return `<div class="panel prompt"><div class="row"><span class="over">回放结束：${resultText(p.winner)}</span>
       <button class="primary" id="again">再放一遍</button><button id="back">返回</button>
-      <a href="api/replays/${encodeURIComponent(replay.id)}/log">文字战报</a></div></div>`;
+      <button data-log="${esc(replay.id)}">文字战报</button></div></div>`;
   }
   const soFar = (p.so_far || []).length ? `<ul>${p.so_far.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : "";
   if (S.need === "over") {
-    const saved = S.replay_id ? `<a href="api/replays/${encodeURIComponent(S.replay_id)}/log">下载这一局的战报</a>` : "";
+    const saved = S.replay_id ? `<button data-log="${esc(S.replay_id)}">这一局的文字战报</button>` : "";
     return `<div class="panel prompt"><div class="row"><span class="over">对战结束：${resultText(p.winner)}</span>
       ${inGame() ? `<button class="primary" id="rematch">再来一局</button>` : ""}${saved}</div>
       ${S.replay_id ? `<span class="muted">这一局已经保存。回到进房间的页面，在“以前的对局”里可以看回放。</span>` : ""}</div>`;
@@ -498,7 +535,7 @@ function renderBattle() {
           <div id="scenepick"></div>
           <div class="actions" id="actions"></div>
         </div>
-        <div class="panel logbox"><h2>战报</h2><div class="log" id="log"></div>
+        <div class="panel logbox"><div class="row"><h2>战报</h2><button id="copylog">复制战报</button></div><div class="log" id="log"></div>
           ${replay ? "" : `<h2>聊天</h2>${chatBoxHtml()}`}</div>
       </div></div>`;
     $("#search").oninput = (e) => { ui.search = e.target.value.trim(); $("#actions").innerHTML = actionsHtml(); };
@@ -524,7 +561,9 @@ function renderBattle() {
       else if (b.id === "skip" && stage) stage.skipping = true;
       else if (b.id === "again") startReplay();
       else if (b.id === "back") leave();
+      else if (b.dataset.log) showSavedLog(b.dataset.log);
     };
+    $("#copylog").onclick = () => showText("这一局到现在的战报", events.filter((e) => e.t === "log").map((e) => e.text).join("\n"));
     $("#stage").onclick = (ev) => {             // 贼的框在舞台里：出拳、重贼的按钮在这里接
       const b = ev.target.closest("button"); if (!b || b.disabled) return;
       if (b.dataset.hand) send({ t: "throw", hand: b.dataset.hand });

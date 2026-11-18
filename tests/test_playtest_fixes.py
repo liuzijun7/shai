@@ -115,6 +115,24 @@ class DeathEffects(unittest.TestCase):
         self.assertTrue(b.fighter("B").has_status("昏睡"))
 
 
+class BothMovesAlwaysComeOut(unittest.TestCase):
+    def test_a_fighter_killed_first_still_gets_its_move_out(self):
+        b = fight("陶渊明", ["饕餮", "武圣"])              # 陶渊明有凌波微步，先出手
+        foe = b.fighter("B")
+        foe.hp, foe.inner = 5000, {}
+        play(b, "0", "0", zei="B")                         # 陶渊明的虚空神术没躲开
+        self.assertIn("B的饕餮虽然已经倒下，这回合选好的【普通攻击】照样打出来。", b.log)
+        self.assertEqual(b.fighter("A").hp, 150000 - 10000)
+        self.assertEqual(b.fighter("B").name, "武圣")      # 打完这一回合才换下一个人上场
+
+    def test_a_fighter_that_lost_a_life_still_acts(self):
+        b = fight("陶渊明", "武圣")
+        b.fighter("B").hp = 5000
+        play(b, "0", "0", zei="B")
+        self.assertIn("B的武圣虽然丢了一条命，这回合选好的【普通攻击】照样打出来。", b.log)
+        self.assertEqual(b.fighter("A").hp, 150000 - 10000)
+
+
 class BorrowedInner(unittest.TestCase):
     def test_song_lian_borrows_only_from_the_fighter_on_the_field(self):
         b = fight("宋濂", ["巫师", "武圣"])
@@ -247,7 +265,8 @@ class ClearerInformation(unittest.TestCase):
 
     def test_moves_that_will_do_nothing_carry_a_warning(self):
         b = fight("武圣", "宋濂")                          # 宋濂免疫魔法
-        self.assertIn("免疫魔法", legal(b, "A")["12"]["warning"])     # 昏睡咒
+        self.assertIn("免疫魔法", legal(b, "A")["4"]["warning"])      # 摄魂大法是魔法
+        self.assertEqual(legal(b, "A")["12"]["warning"], "")         # 昏睡咒是特技，宋濂不免疫
         self.assertEqual(legal(b, "A")["0"]["warning"], "")
         self.assertIn("免疫魔法", b.view()["players"]["B"]["team"][0]["traits"])
 
