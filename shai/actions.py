@@ -73,7 +73,8 @@ class Actions:
         if effect == "rebirth":
             self.cleanse(actor)
             actor.hp = int(actor.max_hp)
-            actor.statuses["无敌"] = Status("无敌", 1, actor.side)
+            # 本子：“清除自身所有坏东西并防一招”。无敌只管用的这一回合，回合结束就没有了。
+            actor.statuses["无敌"] = Status("无敌", 1, actor.side, fresh=False)
             if actor.name == "巫师":
                 actor.shield = 0
                 actor.max_shield = 0
@@ -100,12 +101,13 @@ class Actions:
                 self.apply_status(actor, name, turns, actor.side, force_body=True)
             return self.after_special(actor, spec)
         if effect == "meteor":
-            hits = 0
+            hits, series = 0, self.series_start(target)
             for _ in range(reps):
-                while True:
+                while not self.series_over(target, series):
                     hits += 1
                     self.deal_skill_damage(actor, target, spec, base, 1)
-                    if target.defeated or not self._chance(0.5, actor.side, f"{L(actor)}的流星是否继续"):
+                    if self.series_over(target, series) or not self._chance(
+                            0.5, actor.side, f"{L(actor)}的流星还打不打下一拳", yes="再打一拳", no="流星到此为止"):
                         break
             self._log(f"流星共打出{hits}拳。")
             return
@@ -115,8 +117,6 @@ class Actions:
             return self.after_special(actor, spec)
         if spec["target"] == "enemy":
             if not self.skill_hits(actor, target, spec):
-                self._emit("miss", side=target.side, skill=spec["name"])
-                self._log(f"{L(target)}闪避了【{spec['name']}】。")
                 return self.after_special(actor, spec)
             if self.blocked_by_immunity(actor, target, spec):
                 return self.after_special(actor, spec)
@@ -156,7 +156,7 @@ class Actions:
             self.gamma_ray(actor, target)
             return self.after_special(actor, spec)
         if effect == "sulfuric_acid" and actor.name in {"生化大师", "猪带小天王"}:
-            if self._chance(0.5, actor.side, f"{L(actor)}的硫酸秒杀"):
+            if self._chance(0.5, actor.side, f"{L(actor)}的硫酸能不能秒杀", yes="直接打掉对手这条命", no="没有秒杀"):
                 self.kill_current_life(target, actor.side, all_lives=False, reason="硫酸秒杀")
             else:
                 self._log("硫酸的秒杀没有触发。")
@@ -184,8 +184,10 @@ class Actions:
             self.add_parasite(target, "蚂蟥", 3 * reps, actor.side)
             return self.after_special(actor, spec)
         if effect == "taotie_fang":
-            total = 0
+            total, series = 0, self.series_start(target)
             for _ in range(2 * reps):
+                if self.series_over(target, series):
+                    break
                 total += self.deal_skill_damage(actor, target, spec, base, 1, prechecked=True)
             actor.hp += total
             if actor.hp > actor.max_hp:
@@ -201,11 +203,13 @@ class Actions:
         self.deal_skill_damage(actor, target, spec, base, reps, prechecked=True)
         if target.defeated:
             return self.after_special(actor, spec)
+        self.begin_status_batch()
         for name, turns in spec["statuses"]:
             who = actor if name in SELF_BUFFS else target
             fixed = actor.name == "灵力圣使" and "魔法" in spec["attributes"] and who is target
             self.apply_status(who, name, self.duration(actor, spec, turns), actor.side,
                               force_body=who is actor, unremovable=fixed)
+        self.end_status_batch()
         if effect == "rise_self":
             self.move_vertical(actor, 2 if "圣六式覆盖" in traits else 1)
         elif effect == "lower_target":
@@ -219,7 +223,7 @@ class Actions:
             self._emit("water", level=self.water_level)
             self._log(f"水面上升到高度{self.water_level}。")
         elif effect == "death_note":
-            if self._chance(0.125, actor.side, f"{L(actor)}的死亡笔记秒杀"):
+            if self._chance(0.125, actor.side, f"{L(actor)}的死亡笔记能不能秒杀", yes="直接打掉对手这条命", no="没有秒杀"):
                 self.kill_current_life(target, actor.side, all_lives=False, reason="死亡笔记秒杀")
         elif effect == "drop_ground":
             if target.scene_height > 0:
@@ -246,7 +250,7 @@ class Actions:
                 self.set_scene(target, "地面")
             self.add_radiation(target, 1, actor.side, "行星撞地球")
         elif effect == "u92":
-            if self._chance(0.5, actor.side, f"{L(actor)}的九十二三弑能否让对手昏睡"):
+            if self._chance(0.5, actor.side, f"{L(actor)}的九十二三弑能不能让对手昏睡", yes="对手昏睡3回合", no="对手不昏睡"):
                 self.apply_status(target, "昏睡", self.duration(actor, spec, 3), actor.side)
             if not target.defeated:
                 self.add_radiation(target, 1, actor.side, "九十二三弑")

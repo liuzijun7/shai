@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .data import SCENES
+from .data import LEARN_THRESHOLDS, MAX_INNER_LEVEL, SCENES
 
 
 def _new_resources() -> dict[str, int]:
@@ -55,8 +55,12 @@ class Fighter:
     used_shen: set[str] = field(default_factory=set)   # 这条命里已经用过的神技
     is_true_body: bool = False
     entered: bool = False           # 是否上过场（首次登场的被动只触发一次）
-    learn_progress: dict[str, int] = field(default_factory=dict)   # 每种内功学了多少下
+    # 每种内功学了多少下。学来的内功归玩家：同一个玩家的所有人物共用这一份（雨晨）。
+    # 人物自带的内功（比如陶渊明的凌波微步 3 级）只有他自己有，换了人物就没有。
+    learn_progress: dict[str, int] = field(default_factory=dict)
     devices: dict[str, int] = field(default_factory=dict)          # 造的装置：名字 -> 造了多少下
+    # 借内功（宋濂）：现在向谁借。借的是对面场上的人物；那个人物下场或者死了，借来的内功就没有了。
+    lender: "Fighter | None" = field(default=None, repr=False, compare=False)
 
     @property
     def scene_height(self) -> int:
@@ -66,9 +70,36 @@ class Fighter:
         return name in self.statuses and self.statuses[name].turns > 0
 
     def inner_level(self, name: str) -> int:
+        """这种内功现在几级：自带的、学来的、借来的，取最高的。"""
         if self.has_status("封内"):
             return 0
-        return int(self.inner.get(name, 0))
+        return max(self.own_level(name), self.borrowed_level(name))
+
+    def learned_level(self, name: str) -> int:
+        progress = int(self.learn_progress.get(name, 0))
+        return min(MAX_INNER_LEVEL, sum(1 for need in LEARN_THRESHOLDS.get(name, ()) if progress >= need))
+
+    def own_level(self, name: str) -> int:
+        """不算借来的：人物自带的和玩家学来的，取高的。"""
+        return max(int(self.inner.get(name, 0)), self.learned_level(name))
+
+    def borrowed_level(self, name: str) -> int:
+        lender = self.lender
+        if lender is None or lender.defeated:
+            return 0
+        return lender.own_level(name)
+
+    def own_inner(self) -> dict[str, int]:
+        names = set(self.inner) | set(self.learn_progress)
+        return {name: self.own_level(name) for name in names if self.own_level(name) > 0}
+
+    def all_inner(self) -> dict[str, int]:
+        """自带的、学来的、借来的内功合在一起，每种取最高的等级。"""
+        merged = self.own_inner()
+        if self.lender is not None and not self.lender.defeated:
+            for name, level in self.lender.own_inner().items():
+                merged[name] = max(int(merged.get(name, 0)), int(level))
+        return merged
 
     def reset_resources(self) -> None:
         self.resources = _new_resources()
@@ -79,6 +110,11 @@ class Player:
     side: str
     team: list[Fighter]
     active: int = 0                 # 场上人物在 team 里的下标
+    learn_progress: dict[str, int] = field(default_factory=dict)   # 学内功的进度：这个玩家所有的人物共用
+
+    def __post_init__(self) -> None:
+        for fighter in self.team:
+            fighter.learn_progress = self.learn_progress
 
     @property
     def fighter(self) -> Fighter:

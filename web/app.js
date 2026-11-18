@@ -34,6 +34,18 @@ const HAND_NAMES = ["石头", "剪刀", "布"];
 const HAND_GLYPH = { "石头": "✊", "剪刀": "✌", "布": "✋" };
 const TABS = ["全部", "技能", "神技", "防御", "物品", "专属", "内功", "换人"];
 
+// 人物特点在引擎里的名字比较短，这里换成看得懂的话。没列出来的照原样显示。
+const TRAIT_TEXT = {
+  "必中": "所有的招必中", "免疫不良": "免疫不良特效", "特效时长2": "打出的特效回合数加倍",
+  "免疫水压": "不怕水压", "首次X光": "第一次上场给对手累计辐射 5 次", "体力无上限": "体力没有上限",
+  "透视": "透视：对手先选招，他看到以后再选", "借内功": "借对面场上人物的内功", "神技无限": "神技不限次数",
+  "龙王技能覆盖": "洪水、寒潮、地震、台风更强，回合开始可以移动对手", "生化覆盖": "化学和生物的招更强",
+  "洪水覆盖": "洪水更强", "魔法2": "魔法的伤害和特效回合数加倍", "圣六式覆盖": "圣六式空凌更强",
+  "收集5": "收集东西一次得 5 个", "库巴": "回合开始可以被扔，也可以自己跑", "初登场无敌3": "第一次上场无敌 3 回合",
+  "真身": "体力 2 万以下自动回满",
+};
+const traitText = (list) => (list || []).map((t) => TRAIT_TEXT[t] || t).join("；");
+
 function toast(text) {
   const el = $("#toast");
   el.textContent = text; el.hidden = false;
@@ -48,6 +60,10 @@ const rightSide = () => (leftSide() === "A" ? "B" : "A");
 const seatName = (side) => (S && S.seats && S.seats[side] ? S.seats[side].name : side);
 // 怎么称呼一方：上场的人看到“你”和“对手”，旁观的人看到名字。
 const who = (side) => (inGame() ? (side === me.side ? "你" : "对手") : seatName(side));
+// 把“A的武圣”这种写法换成“你的武圣”“对手的武圣”。
+const personal = (text) => (inGame()
+  ? String(text || "").split(me.side + "的").join("你的").split(rightSide() + "的").join("对手的")
+  : String(text || ""));
 
 // ---------- 连接 ----------
 
@@ -219,7 +235,7 @@ function renderLobby() {
             <span class="face">${ART.has(c.name) ? `<img src="assets/characters/${encodeURIComponent(c.name)}.png" alt="">` : `<i>${esc(c.name.slice(0, 1))}</i>`}</span>
             <span class="about"><b>${order >= 0 ? (order + 1) + ". " : ""}${esc(c.name)}</b>
             <small>体力 ${c.hp / 10000} 万${c.shield ? "　盾 " + c.shield / 10000 + " 万" : ""}${c.lives > 1 ? "　" + c.lives + " 条命" : ""}　距离 ${c.distance}</small>
-            <small>${esc(inner || "没有内功")}</small><small>${esc(c.traits.join("、"))}</small></span></button>`;
+            <small>${esc(inner || "没有内功")}</small><small>${esc(traitText(c.traits))}</small></span></button>`;
         }).join("")}</div>
       </div>
       <div class="panel chatbox"><h2>聊天</h2>${chatBoxHtml()}</div>
@@ -260,7 +276,10 @@ function benchHtml(side) {
     return `<span class="chip ${f.defeated ? "out" : ""}">${esc(f.name)}${f.defeated ? "" : " " + f.hp}</span>`;
   }).join("");
   const active = p.team[p.active];
-  const inner = Object.entries(active.inner || {}).filter(([, v]) => v > 0).map(([k, v]) => `<span class="chip">${esc(k)}${v}</span>`).join("");
+  const lent = new Set(active.borrowed || []);
+  const inner = Object.entries(active.inner || {}).filter(([, v]) => v > 0)
+    .map(([k, v]) => `<span class="chip">${esc(k)}${v}${lent.has(k) ? "（借）" : ""}</span>`).join("");
+  const traits = traitText(active.traits);
   const items = Object.entries(active.resources || {}).filter(([, v]) => v > 0).map(([k, v]) => `<span class="chip">${esc(k)} ${v}</span>`).join("");
   const devices = Object.entries(active.devices || {}).filter(([, v]) => v > 0).map(([k, v]) => `<span class="chip">${esc(k)} 造了 ${v} 下</span>`).join("");
   const label = inGame() ? `${who(side)}（${esc(seatName(side))}）` : `${side}：${esc(seatName(side))}`;
@@ -268,7 +287,8 @@ function benchHtml(side) {
   return `<div class="row"><b>${label}</b>${chosen ? `<span class="chip on">已选招</span>` : ""}</div>
     <div class="chips"><span class="muted">场下：</span>${chips || `<span class="muted">没有</span>`}</div>
     <div class="chips"><span class="muted">内功：</span>${inner || `<span class="muted">没有</span>`}</div>
-    <div class="chips"><span class="muted">物品：</span>${items}${devices}</div>`;
+    <div class="chips"><span class="muted">物品：</span>${items}${devices}</div>
+    ${traits ? `<div class="traits"><span class="muted">特点：</span>${esc(traits)}</div>` : ""}`;
 }
 
 function resultText(winner) {
@@ -295,22 +315,38 @@ function promptHtml() {
       ${inGame() ? `<button class="primary" id="rematch">再来一局</button>` : ""}${saved}</div>
       ${S.replay_id ? `<span class="muted">这一局已经保存。回到进房间的页面，在“以前的对局”里可以看回放。</span>` : ""}</div>`;
   }
-  if (S.need === "choose") return `<div class="panel prompt"><b>请选这回合的招。</b></div>`;
+  const sees = (S.view && S.view.sees) || {};
+  if (S.need === "choose") {
+    const peek = S.view.peek;
+    const note = peek ? `<span class="peek">透视：对手这回合选了【${esc(peek.name)}】${peek.destination ? "（去" + esc(peek.destination) + "）" : ""}。</span>`
+      : (inGame() && sees[R] ? `<span class="muted">对手能透视你：你选完以后他才选，他看得到你选了什么。</span>` : "");
+    return `<div class="panel prompt"><b>请选这回合的招。</b>${note}</div>`;
+  }
   if (S.need === "pick") {
     return `<div class="panel prompt"><b>${esc(p.reason)}</b>${soFar}<div class="row">${p.options.map((o) => `<button class="primary" data-pick="${esc(o.id)}">${esc(o.name)}</button>`).join("")}</div></div>`;
   }
-  if (p.mode) {                // 正在贼
+  if (p.mode) {                // 正在贼：写清楚这一把在定什么、谁赢了会怎样
+    const stakes = p.stakes || {}, series = p.series;
+    const line = (side, cls) => (stakes[side] ? `<span class="${cls}"><b>${esc(who(side))}赢</b> → ${esc(personal(stakes[side]))}</span>` : "");
+    const tie = p.mode === "single"
+      ? `<span><b>打平</b> → ${esc(personal(stakes.tie || "不算赢"))}（这种贼只出一次）</span>`
+      : `<span class="muted">打平就再出一次，直到分出胜负。</span>`;
+    const count = series ? `<p class="series">要连赢 ${series.need} 把才算数。现在是第 ${series.index} 把。</p>` : "";
     const hand = (r, side) => `${esc(who(side))} ${HAND_GLYPH[r[side]]} ${esc(r[side])}`;
-    const rounds = (p.rounds || []).map((r, i) => `<li>第 ${i + 1} 轮：${hand(r, L)}，${hand(r, R)}</li>`).join("");
-    const shown = p.choices ? `<p>${esc(who(L))}出了【${esc(p.choices[L].name)}】，${esc(who(R))}出了【${esc(p.choices[R].name)}】。</p>` : "";
+    const rounds = (p.rounds || []).map((r, i) => `<li>这一次贼的第 ${i + 1} 把：${hand(r, L)}，${hand(r, R)}${r[L] === r[R] ? "，打平" : ""}</li>`).join("");
+    const shown = p.choices ? `<p>${esc(who(L))}出的招是【${esc(p.choices[L].name)}】，${esc(who(R))}出的招是【${esc(p.choices[R].name)}】。</p>` : "";
     let body;
     if (S.need === "throw") body = `<div class="row hands">${HAND_NAMES.map((h) => `<button class="primary" data-hand="${h}"><span>${HAND_GLYPH[h]}</span> ${h}</button>`).join("")}</div>`;
-    else if (S.need === "redo") body = `<div class="row"><b>这一轮你输了。你还能重贼 ${p.redo_left[me.side]} 次。</b><button class="primary" data-redo="1">重贼</button><button data-redo="0">算了</button></div>`;
-    else if (p.redo_side) body = `<p class="muted">${esc(who(p.redo_side))}输了，正在决定要不要重贼…</p>`;
-    else if (inGame()) body = `<p class="muted">${p.thrown && p.thrown[me.side] ? "你已经出了，等对手出拳…" : "等待中…"}</p>`;
+    else if (S.need === "redo") body = `<div class="row"><b>这一把你输了。你有内功“重贼”，还能重来 ${p.redo_left[me.side]} 次。</b><button class="primary" data-redo="1">重贼</button><button data-redo="0">算了</button></div>`;
+    else if (p.redo_side) body = `<p class="muted">${esc(who(p.redo_side))}输了，正在决定要不要用“重贼”再来一次…</p>`;
+    else if (inGame()) body = `<p class="muted">${p.thrown && p.thrown[me.side] ? "你已经出了，等对手出拳…" : "这一次贼不用你出拳，等结果…"}</p>`;
     else body = `<p class="muted">等双方出拳…</p>`;
-    return `<div class="panel prompt ${S.need === "throw" || S.need === "redo" ? "" : "wait"}"><b>贼：${esc(p.reason)}</b>
-      <span class="muted">${p.mode === "single" ? "只贼一次，打平不算赢。" : "贼到分出胜负为止。"}</span>${shown}${soFar}${rounds ? `<ul>${rounds}</ul>` : ""}${body}</div>`;
+    return `<div class="panel prompt zei ${S.need === "throw" || S.need === "redo" ? "" : "wait"}">
+      <b class="zei-title">贼：${esc(personal(p.reason))}</b>${count}
+      <div class="stakes">${line(L, "win")}${line(R, "lose")}${tie}</div>${shown}${rounds ? `<ul>${rounds}</ul>` : ""}${body}</div>`;
+  }
+  if (inGame() && S.need === "wait" && !S.view.chosen[me.side] && sees[me.side]) {
+    return `<div class="panel prompt wait"><b>你能透视对手。</b><span class="muted">等对手先选招，你看到他选了什么以后再选。</span></div>`;
   }
   const idle = inGame() ? "你已经选好了，等对手…" : "观战中。双方正在选招…";
   return `<div class="panel prompt wait"><span class="muted">${p.reason ? esc(p.reason) + "…" : idle}</span></div>`;
@@ -358,7 +394,7 @@ function actionsHtml() {
       : (a.statuses || []).map(([n, t]) => n + t).join(" ");
     const color = ATTR_COLOR[a.attributes[0]] || "transparent";
     return `<button class="action" style="border-left-color:${color}" data-action="${esc(a.id)}" ${a.legal ? "" : "disabled"} title="${esc(a.legal ? a.description || "" : a.reason)}">
-      <b>${esc(a.name)}</b><small>${esc(info)}</small>${extra ? `<small>${esc(extra)}</small>` : ""}${a.legal ? "" : `<small>${esc(a.reason)}</small>`}</button>`;
+      <b>${esc(a.name)}</b><small>${esc(info)}</small>${extra ? `<small>${esc(extra)}</small>` : ""}${a.legal ? "" : `<small>${esc(a.reason)}</small>`}${a.legal && a.warning ? `<small class="warn">${esc(a.warning)}</small>` : ""}</button>`;
   }).join("") || `<span class="muted">没有符合的招。</span>`;
 }
 
@@ -380,7 +416,7 @@ function topHtml() {
   const watchers = S.watchers.length ? `　观战：${esc(S.watchers.join("、"))}` : "";
   return `<span><b>房间 ${esc(S.room)}</b>　第 ${v.round} 回合　水面高度 ${v.water_level}　${v.zei_enabled ? "用贼" : "不用贼（电脑掷概率）"}　${S.settings.timers ? "限时" : "不限时"}${inGame() ? "" : "　你在观战"}${watchers}</span>
     <span class="row">${mine && v.zei_enabled ? `<label><input type="checkbox" id="auto" ${mine.auto_zei ? "checked" : ""}> 电脑替我出拳</label>` : ""}
-    ${buttons}${inGame() ? "" : `<button id="back">离开</button>`}</span>`;
+    ${buttons}<button id="back">${inGame() ? "退出" : "离开"}</button></span>`;
 }
 
 function renderControls() {
@@ -406,7 +442,9 @@ async function pump() {
   while (stage && mine === run && played < events.length) {
     const ev = events[played++];
     if (ev.t === "log") appendLog(ev.text);
-    else await stage.play(ev, S.view);
+    else {
+      try { await stage.play(ev, S.view); } catch (error) { console.error("这条事件没播出来", ev, error); }
+    }
   }
   if (mine !== run) return;                   // 中途换了一局（比如点了“再放一遍”）：这一轮播放作废
   playing = false;
@@ -419,7 +457,8 @@ async function pump() {
   renderControls();
 }
 
-function leave() { location.hash = ""; location.reload(); }
+// 回到进房间的页面。上场的人留着房间号：座位还给他留着，再进同一个房间可以接着打。
+function leave() { if (!inGame()) location.hash = ""; location.reload(); }
 
 function renderBattle() {
   if (!$("#battle")) {

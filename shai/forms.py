@@ -80,6 +80,7 @@ class Forms:
             self._log(f"{self.label(target)}处于无敌，{reason}无效。")
             return
         self.add_radiation(target, 15, source.side, reason)
-        if not target.defeated and self._chance(0.125, source.side, f"{self.label(source)}的伽马射线是不是臭伽马"):
+        if not target.defeated and self._chance(
+                0.125, source.side, f"{self.label(source)}的伽马射线是不是臭伽马", yes="对手强制昏睡10回合", no="不是臭伽马"):
             self.apply_status(target, "昏睡", 10, source.side, forced=True)
             self._log("臭伽马触发，强制昏睡。")

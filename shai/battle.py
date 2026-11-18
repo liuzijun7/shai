@@ -113,7 +113,36 @@ class Battle(Rules, Actions, TurnStart, Forms):
             return []
         if self.pending:
             return list(self.pending["askers"])
-        return [side for side in SIDES if side not in self.choices]
+        return [side for side in SIDES if side not in self.choices and not self._must_wait(side)]
+
+    # ---------- 透视 ----------
+
+    def _sees_through(self, side: str) -> bool:
+        """这一方这回合能不能透视对手：对手先选招，他看到以后再选。
+
+        纵目青铜怪自带透视；身上有“透视”状态（灵气寒霜指打出来的）的人物被对手透视。
+        两边互相都能透视就抵消，照常同时选。
+        """
+        me, foe = self.fighter(side), self.fighter(self.other(side))
+        if me.defeated or foe.defeated:
+            return False
+
+        def can(seer: Fighter, seen: Fighter) -> bool:
+            return "透视" in self.traits(seer) or seen.has_status("透视")
+
+        return can(me, foe) and not can(foe, me)
+
+    def _must_wait(self, side: str) -> bool:
+        """能透视的一方要等对手先选。"""
+        return self._sees_through(side) and self.other(side) not in self.choices
+
+    def _peek(self, side: str) -> dict[str, Any] | None:
+        """这一方透视到的东西：对手这回合已经选好的招。看不到就是 None。"""
+        other = self.other(side)
+        if side in self.choices or other not in self.choices or other in self.skipping or not self._sees_through(side):
+            return None
+        spec = self.choices[other]["spec"]
+        return {"id": spec["id"], "name": spec["name"], "destination": self.choices[other]["destination"]}
 
     def legal_actions(self, side: str) -> list[dict[str, Any]]:
         actor, target = self.fighter(side), self.fighter(self.other(side))
@@ -127,11 +156,14 @@ class Battle(Rules, Actions, TurnStart, Forms):
             blocked_all = "正在等待一个决定"
         elif side in self.choices:
             blocked_all = "这回合不能出招" if side in self.skipping else "本回合已经选过"
+        elif self._must_wait(side):
+            blocked_all = "你能透视对手：等对手先选"
         result = []
         for action_id in ids:
             spec = _OXYGEN if action_id == "sys_collect_oxygen" else SKILLS[action_id]
             reason = blocked_all or self._illegal_reason(actor, target, spec)
-            entry = {**spec, "tier": self._tier(actor, spec), "legal": reason is None, "reason": reason or ""}
+            entry = {**spec, "tier": self._tier(actor, spec), "legal": reason is None, "reason": reason or "",
+                     "warning": self._warning(target, spec)}
             if spec["effect"] in {"build_accelerator", "accelerator"}:
                 built = int(actor.devices.get("粒子加速器", 0))
                 entry["damage"] = self.character_damage(actor, spec)
@@ -147,7 +179,7 @@ class Battle(Rules, Actions, TurnStart, Forms):
                 "description": "学一次内功占用这个回合的出招。", "character": None, "action_kind": "learn",
                 "tier": TIER_NORMAL, "legal": reason is None, "reason": reason or "",
                 "progress": progress, "next": next((n for n in needs if n > progress), None),
-                "level": int(actor.inner.get(name, 0)),
+                "level": actor.own_level(name),
             })
         for index in self.players[side].bench():
             other = self.players[side].team[index]
@@ -177,8 +209,11 @@ class Battle(Rules, Actions, TurnStart, Forms):
         if len(self.choices) == 2:
             self._begin("round")
 
-    def answer(self, value: Any) -> None:
-        """回答 ``pending`` 里的问题。贼：赢的一方（单次贼打平传 None）。选择：选项的 id。"""
+    def answer(self, value: Any, detail: Any = None) -> None:
+        """回答 ``pending`` 里的问题。贼：赢的一方（单次贼打平传 None）。选择：选项的 id。
+
+        detail：贼的时候双方每一轮出的拳。只是记下来给人看，不影响结果。
+        """
         request = self.pending
         if request is None:
             raise RuleError("现在没有等待决定的问题。")
@@ -187,8 +222,11 @@ class Battle(Rules, Actions, TurnStart, Forms):
                 raise RuleError("这个选项不存在。")
         elif value not in request["sides"] and not (value is None and request["mode"] == "single"):
             raise RuleError("贼的结果无效。")
-        self._decisions.append({"kind": request["_kind"], "value": value})
-        self.history.append({"type": "answer", "kind": request["_kind"], "value": value})
+        entry = {"kind": request["_kind"], "value": value}
+        if detail:
+            entry["detail"] = detail
+        self._decisions.append(entry)
+        self.history.append({"type": "answer", **entry})
         self._run()
 
     def view(self) -> dict[str, Any]:
@@ -197,6 +235,8 @@ class Battle(Rules, Actions, TurnStart, Forms):
             "done": self.done, "winner": self.winner, "zei_enabled": self.zei_enabled,
             "pending": self.pending, "waiting_for": self.waiting_for(),
             "chosen": {side: side in self.choices for side in SIDES},
+            "sees": {side: self._sees_through(side) for side in SIDES},     # 谁能透视对手（双方都看得到）
+            "peek": {side: self._peek(side) for side in SIDES},             # 透视到的招（只能给本人看）
             "players": {
                 side: {"active": p.active, "team": [self._fighter_view(f) for f in p.team]}
                 for side, p in self.players.items()
@@ -260,6 +300,7 @@ class Battle(Rules, Actions, TurnStart, Forms):
         self._restore(self._snap)
         self._cursor = 0
         self._count = 0
+        self._status_batch = None
         self._probe_seen = {}
         try:
             if self._unit == "open":
@@ -340,24 +381,46 @@ class Battle(Rules, Actions, TurnStart, Forms):
     def _rezei(self, a: str, b: str) -> dict[str, int]:
         return {side: self.fighter(side).inner_level("重贼") for side in (a, b)}
 
-    def _zei(self, a: str, b: str, mode: str, reason: str) -> str | None:
-        """a 和 b 贼一次。decisive：贼到分出胜负，返回赢的一方。single：只贼一次，平局返回 None。"""
+    def _zei(self, a: str, b: str, mode: str, reason: str, stakes: dict[Any, str] | None = None,
+             series: dict[str, int] | None = None) -> str | None:
+        """a 和 b 贼一次。decisive：贼到分出胜负，返回赢的一方。single：只贼一次，平局返回 None。
+
+        stakes：谁赢了会怎样（键是 a、b，打平用 None），写给玩家看。
+        series：这是“要连赢几把”里的第几把，比如 {"need": 2, "index": 1}。
+        """
         if not self.zei_enabled:
             if mode == "decisive":
                 return a if self.rng.random() < 0.5 else b
             roll = self.rng.random()
             return a if roll < 1 / 3 else (None if roll < 2 / 3 else b)
-        decision = self._decide("zei", mode=mode, sides=[a, b], reason=reason, rezei=self._rezei(a, b))
+        stakes = stakes or {}
+        shown = {a: stakes.get(a, ""), b: stakes.get(b, ""), "tie": stakes.get(None, "")}
+        decision = self._decide("zei", mode=mode, sides=[a, b], reason=reason, rezei=self._rezei(a, b),
+                                stakes=shown, series=series)
         winner = decision["value"]
-        self._emit("zei", mode=mode, sides=[a, b], winner=winner, reason=reason)
-        self._log(f"贼（{reason}）：{'打平' if winner is None else winner + '赢'}。")
+        outcome = stakes.get(winner, "")
+        self._emit("zei", mode=mode, sides=[a, b], winner=winner, reason=reason, purpose="chance",
+                   rounds=decision.get("detail") or [], outcome=outcome, series=series)
+        self._log(f"贼（{reason}）：{self._hands_text(decision)}{'打平' if winner is None else winner + '赢'}"
+                  + (f"，{outcome}。" if outcome else "。"))
         return winner
 
-    def _chance(self, probability: float, side: str, reason: str) -> bool:
+    @staticmethod
+    def _hands_text(decision: dict[str, Any]) -> str:
+        """战报里写双方最后一把出了什么；之前打平过几把也写上。"""
+        rounds = decision.get("detail") or []
+        if not rounds:
+            return ""
+        last = rounds[-1]
+        ties = f"先打平{len(rounds) - 1}把，然后" if len(rounds) > 1 else ""
+        return ties + "，".join(f"{side}出{hand}" for side, hand in sorted(last.items())) + "，"
+
+    def _chance(self, probability: float, side: str, reason: str, yes: str = "成", no: str = "不成") -> bool:
         """一次概率判定。``side`` 是想让它生效的那一方，要他贼赢才算。
 
         三分之一：贼一次赢了才算。三分之二：贼一次不输就算。二分之一：贼到分出胜负。
         四分之一：连赢两次。八分之一：连赢三次。别的概率由电脑掷随机数。
+        yes、no：成了会怎样、不成会怎样，写给玩家看。
         """
         if probability <= 0:
             return False
@@ -369,12 +432,17 @@ class Battle(Rules, Actions, TurnStart, Forms):
             return abs(probability - x) < 0.02
 
         if near(1 / 3):
-            return self._zei(side, other, "single", reason) == side
+            return self._zei(side, other, "single", reason, {side: yes, other: no, None: no}) == side
         if near(2 / 3):
-            return self._zei(side, other, "single", reason) != other
+            return self._zei(side, other, "single", reason, {side: yes, other: no, None: yes}) != other
         for wins, p in ((1, 1 / 2), (2, 1 / 4), (3, 1 / 8)):
             if near(p):
-                return all(self._zei(side, other, "decisive", reason) == side for _ in range(wins))
+                for k in range(1, wins + 1):
+                    stakes = {side: yes if k == wins else f"还要再赢{wins - k}把才算数", other: no}
+                    series = {"need": wins, "index": k} if wins > 1 else None
+                    if self._zei(side, other, "decisive", reason, stakes, series) != side:
+                        return False
+                return True
         return self.rng.random() < probability
 
     def _decide_order(self, a: str, b: str, reason: str, chosen: dict[str, Any]) -> str:
@@ -382,25 +450,36 @@ class Battle(Rules, Actions, TurnStart, Forms):
             return self._forced_first
         if not self.zei_enabled:
             return a if self.rng.random() < 0.5 else b
+        first = {side: f"{self.label(self.fighter(side))}先出手" for side in (a, b)}
         decision = self._decide("order", mode="decisive", sides=[a, b], reason=reason,
-                                choices=chosen, rezei=self._rezei(a, b))
+                                choices=chosen, rezei=self._rezei(a, b),
+                                stakes={a: first[a], b: first[b], "tie": ""}, series=None)
         winner = decision["value"]
         if decision.get("auto"):
             self._log("双方同一档出手，先后不影响结果。")
         else:
-            self._emit("zei", mode="decisive", sides=[a, b], winner=winner, reason=reason)
-            self._log(f"贼（{reason}）：{winner}赢，{winner}先出手。")
+            self._emit("zei", mode="decisive", sides=[a, b], winner=winner, reason=reason, purpose="order",
+                       rounds=decision.get("detail") or [], outcome=first[winner], series=None)
+            self._log(f"贼（{reason}）：{self._hands_text(decision)}{winner}赢，{winner}先出手。")
         return winner
 
     # ================= 回合流程 =================
 
     def _open(self) -> None:
+        self._link_lenders()
         for side in SIDES:
             self._on_enter(self.fighter(side))
         self._start_phase()
 
+    def _link_lenders(self) -> None:
+        """借内功的人物（宋濂）只向对面场上的人物借：那个人物下场或者死了，借来的内功就没有了。"""
+        for side in SIDES:
+            fighter, foe = self.fighter(side), self.fighter(self.other(side))
+            fighter.lender = foe if "借内功" in self.traits(fighter) else None
+
     def _start_phase(self) -> None:
         self.choices, self.skipping = {}, set()
+        self._link_lenders()
         for side in SIDES:
             actor, target = self.fighter(side), self.fighter(self.other(side))
             if actor.defeated:
@@ -471,7 +550,7 @@ class Battle(Rules, Actions, TurnStart, Forms):
         if len(acting) == 2:
             tiers = [self._tier(self.fighter(side), specs[side]) for side in acting]
             if tiers[0] == tiers[1]:
-                first = self._decide_order(acting[0], acting[1], "同一档出手，定谁先", chosen)
+                first = self._decide_order(acting[0], acting[1], "两边的招同一档，谁先出手结果不一样", chosen)
                 order = acting if first == acting[0] else acting[::-1]
             else:
                 order = acting if tiers[0] > tiers[1] else acting[::-1]
@@ -545,10 +624,13 @@ class Battle(Rules, Actions, TurnStart, Forms):
         for name in [n for n in old.statuses if n not in SELF_BUFFS and n != "无敌"]:
             old.statuses.pop(name, None)       # 下场时不良特效和虫子消失
         old.parasites.clear()
+        old.lender = None
         player.active = index
         new.scene = old.scene                  # 新上场的人物站在上一个人物的场景
+        self._link_lenders()
+        # 把上场的人物整个放进事件里：他这时候才亮出来，网页手里的局面可能还是他上场之前的
         self._emit("switch", side=side, index=index, name=new.name, voluntary=voluntary,
-                   scene=new.scene, height=new.scene_height, **self.vitals(new))
+                   scene=new.scene, height=new.scene_height, fighter=self._fighter_view(new), **self.vitals(new))
         self._log(f"{side}换上{new.name}。" if voluntary else f"{side}的{old.name}倒下，{new.name}上场。")
         self._on_enter(new)
 
@@ -569,6 +651,7 @@ class Battle(Rules, Actions, TurnStart, Forms):
             return
         a, b = self.players[side], self.players[other]
         a.team[a.active], b.team[b.active] = theirs, mine
+        mine.learn_progress, theirs.learn_progress = b.learn_progress, a.learn_progress   # 学来的内功归玩家，不跟着人物走
         for fighter in (mine, theirs):
             fighter.side = self.other(fighter.side)
             for status in fighter.statuses.values():        # 状态和虫子是谁加的，也跟着换边
@@ -579,6 +662,7 @@ class Battle(Rules, Actions, TurnStart, Forms):
             for item in fighter.counters.get("delayed_effects", []):
                 if item.get("source") in SIDES:
                     item["source"] = self.other(item["source"])
+        self._link_lenders()
         self._emit("swap_fighters", side=side, fighters={s: self._fighter_view(self.fighter(s)) for s in SIDES})
         self._log(f"{side}的{mine.name}使用【换人】：{theirs.name}归{side}，{mine.name}归{other}。")
         for s in SIDES:
@@ -593,10 +677,6 @@ class Battle(Rules, Actions, TurnStart, Forms):
             return
         fighter.entered = True
         traits, foe = self.traits(fighter), self.fighter(self.other(fighter.side))
-        if fighter.name == "宋濂" and not foe.defeated:     # 复制对手的内功，再加铁布衫 3
-            fighter.inner = dict(foe.inner)
-            fighter.inner["铁布衫"] = 3
-            fighter.initial_inner = dict(fighter.inner)
         if "初登场无敌3" in traits:
             fighter.statuses["无敌"] = Status("无敌", 3, fighter.side, fresh=False)
         if "首次X光" in traits and not foe.defeated:
@@ -718,12 +798,25 @@ class Battle(Rules, Actions, TurnStart, Forms):
         if effect in {"rise_self", "choose_scene"} and actor.has_status("万能胶"):
             return "万能胶使场景无法移动"
         any_scene = effect == "accelerator" and actor.devices.get("粒子加速器", 0) >= ACCELERATOR_BIG["builds"]
+        # 够不够得着（雨晨）：在上面的人默认打得到下面的人；在下面的人默认打不到上面的人，
+        # 除非这个招本身能往上打；神技不受限制；能打全宇宙的人物出什么招都打得到。
+        any_scene = any_scene or "神技" in spec["attributes"]
+        # 引擎原来给饕餮、埃及法老、生化大师、占卜大师各算了 2 到 4 层的“人物距离”，照雨晨说的不算了：
+        # 不能打全宇宙的人物，往上打只看这个招自己能打多高。
         if spec["target"] == "enemy" and actor.distance != inf and not any_scene:
-            reach = float(actor.distance) + float(spec["distance"])
-            gap = abs(actor.scene_height - target.scene_height)
+            reach = int(spec["distance"])
+            gap = target.scene_height - actor.scene_height
             if gap > reach:
-                return f"距离不够：高度差{gap}，人物加技能的距离是{int(reach)}"
+                return (f"够不着：对手比你高{gap}层，" + (f"这个招最多往上打{reach}层" if reach else "这个招不能往上打"))
         return None
+
+    def _warning(self, target: Fighter, spec: dict[str, Any]) -> str:
+        """这个招现在出了也没用的原因（对手免疫，或者对手正无敌）。只是提醒，不拦着出。"""
+        hits_foe = spec["target"] == "enemy" or spec["effect"] == "self_status_and_damage"
+        if not hits_foe or spec["action_kind"] != "skill" or target.defeated:
+            return ""
+        why = self.immunity_reason(target, spec)
+        return f"对手{why}，这个招现在打他无效" if why else ""
 
     # ================= 杂项 =================
 
@@ -744,7 +837,9 @@ class Battle(Rules, Actions, TurnStart, Forms):
             "side": f.side, "character_id": f.character_id, "name": f.name, "hp": f.hp, "max_hp": f.max_hp,
             "shield": f.shield, "max_shield": f.max_shield, "lives_remaining": f.lives_remaining,
             "lives_total": f.lives_total, "distance": "无穷" if f.distance == inf else f.distance,
-            "scene": f.scene, "height": f.scene_height, "inner": dict(f.inner),
+            "scene": f.scene, "height": f.scene_height, "inner": f.all_inner(),
+            "borrowed": sorted(n for n, level in f.all_inner().items() if level > int(f.inner.get(n, 0))),
+            "traits": sorted(self.traits(f)),
             "statuses": {n: {"turns": s.turns, "layer": s.layer} for n, s in f.statuses.items()},
             "parasites": {n: {"count": p.count, "layer": p.layer} for n, p in f.parasites.items()},
             "resources": dict(f.resources), "radiation": f.radiation, "defeated": f.defeated,

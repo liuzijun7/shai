@@ -34,12 +34,15 @@ class TurnStart:
             if target.name == "牛顿":
                 own = self._ask_scene(side, f"{self.label(target)}这回合去哪个场景", "不动")
             if forced and own and forced != own:
-                winner = self._zei(foe_side, side, "decisive", f"{foe.name}要移动{target.name}，{target.name}要自己选场景")
+                winner = self._zei(
+                    foe_side, side, "decisive", f"{self.label(foe)}要把{target.name}移到{forced}，{self.label(target)}自己要去{own}",
+                    {foe_side: f"{target.name}被移到{forced}", side: f"{target.name}去{own}"})
                 destination = forced if winner == foe_side else own
             else:
                 destination = own or forced
             if destination:
-                self.set_scene(target, destination)
+                mover = foe.name if destination == forced and forced != own else target.name
+                self.set_scene(target, destination, f"回合开始时{mover}选了场景")
 
     # ---------- 占卜 ----------
     # 雨晨的回答：每回合出招之前，占卜大师猜对手这回合用什么属性的招，双方都能看到他猜了什么。
@@ -90,22 +93,26 @@ class TurnStart:
         if kuba.has_status("万能胶"):
             self._log(f"{self.label(kuba)}身上有万能胶，这回合不能扔也不能跑。")
             return
-        throw_to = self._ask_scene(foe_side, f"要不要把{self.label(kuba)}扔到别的场景", "不扔")
-        run_to = self._ask_scene(side, f"{self.label(kuba)}要不要跑到别的场景", "不跑")
+        k, thrower = self.label(kuba), self.label(self.fighter(foe_side))
+        throw_to = self._ask_scene(foe_side, f"回合开始：要不要把{k}扔到别的场景？选了场景以后要贼，赢了才扔得动", "不扔")
+        run_to = self._ask_scene(side, f"回合开始：{k}要不要跑到别的场景？选了场景以后要贼，赢了才跑得成", "不跑")
         steps = [name for name, wanted in (("throw", throw_to), ("run", run_to)) if wanted]
         if len(steps) == 2:
             # 第一次贼：定先扔还是先跑。后做的那一样决定库巴最后在哪，所以赢的人的那一样放在后面。
-            winner = self._zei(foe_side, side, "decisive", "库巴的扔和跑，定先后")
+            winner = self._zei(
+                foe_side, side, "decisive",
+                f"{thrower}想把库巴扔到{throw_to}，{k}想跑到{run_to}。先定哪一样后做（后做的说了算）",
+                {foe_side: "先贼“跑”，再贼“扔”", side: "先贼“扔”，再贼“跑”"})
             steps = ["run", "throw"] if winner == foe_side else ["throw", "run"]
         for step in steps:
             if step == "throw":
-                if self._zei(foe_side, side, "decisive", f"扔{self.label(kuba)}") == foe_side:
-                    self._log(f"{self.label(kuba)}被扔了出去。")
-                    self.set_scene(kuba, throw_to)
+                if self._zei(foe_side, side, "decisive", f"{thrower}把{k}扔到{throw_to}",
+                             {foe_side: f"库巴被扔到{throw_to}", side: "没扔动"}) == foe_side:
+                    self.set_scene(kuba, throw_to, "被扔了出去")
                 else:
-                    self._log(f"{self.label(kuba)}没被扔动。")
-            elif self._zei(side, foe_side, "decisive", f"{self.label(kuba)}要跑") == side:
-                self._log(f"{self.label(kuba)}跑了。")
-                self.set_scene(kuba, run_to)
+                    self._log(f"{k}没被扔动。")
+            elif self._zei(side, foe_side, "decisive", f"{k}跑到{run_to}",
+                           {side: f"库巴跑到{run_to}", foe_side: "没跑成"}) == side:
+                self.set_scene(kuba, run_to, "跑了")
             else:
-                self._log(f"{self.label(kuba)}没跑成。")
+                self._log(f"{k}没跑成。")

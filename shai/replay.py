@@ -19,5 +19,5 @@ def rebuild(record: dict[str, Any]) -> Battle:
         if step["type"] == "choose":
             battle.choose(step["side"], step["action"], step.get("destination"))
         else:
-            battle.answer(step["value"])
+            battle.answer(step["value"], step.get("detail"))
     return battle

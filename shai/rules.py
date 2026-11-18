@@ -49,30 +49,48 @@ class Rules:
     # ---------- 命中和免疫 ----------
 
     def skill_hits(self, actor: Fighter, target: Fighter, spec: dict[str, Any]) -> bool:
-        if "必中" in self.traits(actor) or spec["id"] in SURE_HIT_IDS:
+        """这一招打不打得中。没打中的话在这里把原因写进战报。神技必中（雨晨）。"""
+        if "必中" in self.traits(actor) or spec["id"] in SURE_HIT_IDS or "神技" in spec["attributes"]:
             return True
-        if actor.has_status("虚空") and not self._chance(0.25, actor.side, f"{self.label(actor)}中了虚空，【{spec['name']}】能否命中"):
-            return False
-        level = target.inner_level("虚空神术")
-        if level and self._chance(INNER_VALUES["虚空神术"][level], target.side, f"{self.label(target)}用虚空神术闪避【{spec['name']}】"):
-            return False
-        dodge = float(SCENES[target.scene].get("dodge", 0.0))
-        if dodge and self._chance(dodge, target.side, f"{self.label(target)}在{target.scene}里闪避【{spec['name']}】"):
-            return False
-        return True
+        name, a, t = spec["name"], self.label(actor), self.label(target)
+        why = None
+        if actor.has_status("虚空") and not self._chance(
+                0.25, actor.side, f"{a}身上有“虚空”（命中只剩四分之一），【{name}】打不打得中",
+                yes="这一招打中", no="这一招打空"):
+            why = f"{a}身上有“虚空”，【{name}】打空了。"
+        if why is None:
+            level = target.inner_level("虚空神术")
+            if level and self._chance(INNER_VALUES["虚空神术"][level], target.side,
+                                      f"{t}用虚空神术躲【{name}】", yes="躲开这一招", no="没躲开"):
+                why = f"{t}用虚空神术躲开了【{name}】。"
+        if why is None:
+            dodge = float(SCENES[target.scene].get("dodge", 0.0))
+            if dodge and self._chance(dodge, target.side, f"{t}在{target.scene}里躲【{name}】",
+                                      yes="躲开这一招", no="没躲开"):
+                why = f"{t}在{target.scene}里躲开了【{name}】。"
+        if why is None:
+            return True
+        self._emit("miss", side=target.side, skill=name)
+        self._log(why)
+        return False
+
+    def immunity_reason(self, target: Fighter, spec: dict[str, Any]) -> str | None:
+        """这个招对这个人物无效的原因；有效就返回 None。"""
+        traits, attrs = self.traits(target), set(spec["attributes"])
+        if target.has_status("无敌"):
+            return "处于无敌"
+        if "免疫物理" in traits and "物理" in attrs:
+            return "免疫物理的招"
+        if "免疫魔法" in traits and "魔法" in attrs:
+            return "免疫魔法的招"
+        if "免疫火系" in traits and spec["name"] in FIRE_SKILL_NAMES:
+            return "免疫火系的招"
+        if "免疫冰系" in traits and spec["name"] in ICE_SKILL_NAMES:
+            return "免疫冰系的招"
+        return None
 
     def blocked_by_immunity(self, actor: Fighter, target: Fighter, spec: dict[str, Any]) -> bool:
-        traits, attrs, why = self.traits(target), set(spec["attributes"]), None
-        if target.has_status("无敌"):
-            why = "处于无敌"
-        elif "免疫物理" in traits and "物理" in attrs:
-            why = "免疫物理技能"
-        elif "免疫魔法" in traits and "魔法" in attrs:
-            why = "免疫魔法技能"
-        elif "免疫火系" in traits and spec["name"] in FIRE_SKILL_NAMES:
-            why = "免疫火系技能"
-        elif "免疫冰系" in traits and spec["name"] in ICE_SKILL_NAMES:
-            why = "免疫冰系技能"
+        why = self.immunity_reason(target, spec)
         if why is None:
             return False
         self._emit("immune", side=target.side, skill=spec["name"])
@@ -103,12 +121,13 @@ class Rules:
         if base <= 0:
             return 0
         total = 0
-        for _ in range(repetitions):
-            if target.defeated:
+        series = self.series_start(target)
+        for done in range(repetitions):
+            if self.series_over(target, series):
+                if repetitions - done > 0 and not target.defeated:
+                    self._log(f"【{spec['name']}】剩下的{repetitions - done}下落空：一个招只能打掉一个盾牌或一条命。")
                 break
             if not prechecked and not self.skill_hits(actor, target, spec):
-                self._emit("miss", side=target.side, skill=spec["name"])
-                self._log(f"{self.label(target)}闪避了【{spec['name']}】。")
                 continue
             if not prechecked and self.blocked_by_immunity(actor, target, spec):
                 continue
@@ -123,7 +142,8 @@ class Rules:
             if "魔法" in spec["attributes"] and "魔法2" in self.traits(actor):
                 multiplier *= 2
             crit = actor.inner_level("暴击")
-            if crit and self._chance(INNER_VALUES["暴击"][crit], actor.side, f"{self.label(actor)}的暴击"):
+            if crit and self._chance(INNER_VALUES["暴击"][crit], actor.side, f"{self.label(actor)}的【{spec['name']}】出不出暴击",
+                                     yes="这一下伤害翻倍", no="没有暴击"):
                 multiplier *= 2
                 self._emit("crit", side=actor.side)
                 self._log(f"{self.label(actor)}打出暴击，伤害翻倍。")
@@ -141,6 +161,17 @@ class Rules:
             if dealt > 0 and elastic and not actor.defeated:
                 self.apply_nonbasic_damage(target, actor, int(round(dealt * INNER_VALUES["弹性形变"][elastic])), "弹性形变反弹")
         return total
+
+    @staticmethod
+    def series_start(target: Fighter) -> tuple[int, bool]:
+        """一个招开始打之前记下：对手还有几条命、有没有盾牌。"""
+        return target.lives_remaining, target.shield > 0
+
+    @staticmethod
+    def series_over(target: Fighter, start: tuple[int, bool]) -> bool:
+        """一个招只能打一样东西（雨晨）：打的是盾牌，盾牌碎了就停；打的是体力，这条命没了就停。"""
+        lives, shielded = start
+        return target.defeated or target.lives_remaining < lives or (shielded and target.shield <= 0)
 
     def apply_basic_damage(self, actor: Fighter, target: Fighter, amount: int, reason: str) -> int:
         """基础伤害：有盾牌先打盾牌，盾牌不溢出。返回打到体力上的数值。"""
@@ -211,10 +242,10 @@ class Rules:
         harmful = name not in SELF_BUFFS and name != "无敌"
         if harmful and not forced:
             if target.has_status("无敌"):
-                self._log(f"{self.label(target)}处于无敌，免疫{name}。")
+                self._not_applied(target, name, "处于无敌")
                 return False
             if "免疫不良" in self.traits(target):
-                self._log(f"{self.label(target)}自动过滤{name}。")
+                self._not_applied(target, name, "免疫不良特效")
                 return False
             if target.has_status("真空"):
                 turns = floor(turns / 2)
@@ -242,6 +273,25 @@ class Rules:
             target.statuses.pop("万能胶", None)
             self._log(f"{self.label(target)}的万能胶被{name}消除。")
         return True
+
+    def _not_applied(self, target: Fighter, name: str, why: str) -> None:
+        """一个状态没加上。一个招带好几个状态时先攒着，最后合成一行写进战报。"""
+        batch = getattr(self, "_status_batch", None)
+        if batch is not None:
+            batch.append((target.side, self.label(target), why, name))
+        else:
+            self._log(f"{self.label(target)}{why}，{name}没有加上。")
+
+    def begin_status_batch(self) -> None:
+        self._status_batch = []
+
+    def end_status_batch(self) -> None:
+        batch, self._status_batch = getattr(self, "_status_batch", None) or [], None
+        groups: dict[tuple[str, str, str], list[str]] = {}
+        for side, label, why, name in batch:
+            groups.setdefault((side, label, why), []).append(name)
+        for (_, label, why), names in groups.items():
+            self._log(f"{label}{why}，{'、'.join(names)}没有加上。")
 
     def add_parasite(self, target: Fighter, name: str, count: int, source: str) -> None:
         if count <= 0:
@@ -291,8 +341,8 @@ class Rules:
         level = actor.inner_level("幻影")
         if not level:
             return 1
-        x = int(INNER_VALUES["幻影"][min(level, 3)])
-        interval = 5 - x
+        x = int(INNER_VALUES["幻影"][level])
+        interval = max(1, 5 - x)
         return x if int(actor.counters.get("personal_turns", 1)) % interval == 0 else 1
 
     def upgrade_all_inner(self, fighter: Fighter) -> None:
@@ -326,15 +376,15 @@ class Rules:
         if target.radiation >= 15:
             self.kill_current_life(target, source, all_lives=True, reason="辐射达到15点")
 
-    def move_vertical(self, fighter: Fighter, steps: int) -> None:
+    def move_vertical(self, fighter: Fighter, steps: int, why: str = "") -> None:
         if fighter.has_status("万能胶"):
             self._log(f"{self.label(fighter)}受万能胶影响，场景不能移动。")
             return
         heights = [SCENES[name]["height"] for name in VERTICAL_SCENES]
         index = min(range(len(heights)), key=lambda i: abs(heights[i] - fighter.scene_height))
-        self.set_scene(fighter, VERTICAL_SCENES[max(0, min(len(VERTICAL_SCENES) - 1, index + steps))])
+        self.set_scene(fighter, VERTICAL_SCENES[max(0, min(len(VERTICAL_SCENES) - 1, index + steps))], why)
 
-    def set_scene(self, fighter: Fighter, scene: str) -> None:
+    def set_scene(self, fighter: Fighter, scene: str, why: str = "") -> None:
         if scene not in SCENES:
             raise RuleError(f"未知场景：{scene}")
         if fighter.has_status("万能胶") and fighter.name != "牛顿":
@@ -344,7 +394,7 @@ class Rules:
             return
         fighter.scene = scene
         self._emit("scene", side=fighter.side, scene=scene, height=fighter.scene_height)
-        self._log(f"{self.label(fighter)}移动到{scene}（高度{fighter.scene_height}）。")
+        self._log(f"{self.label(fighter)}{why + '，' if why else ''}移动到{scene}（高度{fighter.scene_height}）。")
 
     # ---------- 回合开始 ----------
 
@@ -368,7 +418,9 @@ class Rules:
 
         level = actor.inner_level("幸运")
         bad = [n for n, s in actor.statuses.items() if n not in SELF_BUFFS and n != "无敌" and not s.unremovable]
-        if level and (bad or actor.parasites) and self._chance(INNER_VALUES["幸运"][level], actor.side, f"{self.label(actor)}的幸运"):
+        if level and (bad or actor.parasites) and self._chance(
+                INNER_VALUES["幸运"][level], actor.side, f"{self.label(actor)}的幸运发不发动",
+                yes="解除身上的不良状态和虫子", no="没有解除"):
             for name in bad:
                 actor.statuses.pop(name, None)
                 self._emit("status_end", side=actor.side, name=name)
@@ -378,10 +430,10 @@ class Rules:
         turns = int(actor.counters["personal_turns"])
         level = actor.inner_level("轻于鸿毛")
         if level and turns % int(INNER_VALUES["轻于鸿毛"][level]) == 0:
-            self.move_vertical(actor, 1)
+            self.move_vertical(actor, 1, f"有内功轻于鸿毛{level}级，自己往上飘一层")
         level = actor.inner_level("重于泰山")
         if level and turns % int(INNER_VALUES["重于泰山"][level]) == 0:
-            self.move_vertical(actor, -1)
+            self.move_vertical(actor, -1, f"有内功重于泰山{level}级，自己往下沉一层")
         level = actor.inner_level("昏沉大法")
         if level and turns % int(INNER_VALUES["昏沉大法"][level]) == 0:
             self.apply_status(actor, "昏睡", 1, actor.side, force_body=True)
@@ -500,7 +552,7 @@ class Rules:
         self.apply_nonbasic_damage(None, actor, int(actor.max_hp * 0.10 * layers), "水压", bypass_shield=True)
         actor.counters["underwater_turns"] = int(actor.counters.get("underwater_turns", 0)) + 1
         if actor.counters["underwater_turns"] % 3 == 0:
-            self.move_vertical(actor, 1)
+            self.move_vertical(actor, 1, "在水里待满3回合，浮上来一层")
 
     # ---------- 学内功 ----------
 
@@ -509,10 +561,10 @@ class Rules:
 
     def learn_slots(self, fighter: Fighter) -> int:
         """除了开局自带的以外，还能学几种内功。"""
-        return MAX_LEARNED_INNER + int(INNER_VALUES["内功栏"].get(fighter.inner.get("内功栏", 0), 0))
+        return MAX_LEARNED_INNER + int(INNER_VALUES["内功栏"].get(fighter.own_level("内功栏"), 0))
 
     def learn_reason(self, fighter: Fighter, name: str) -> str | None:
-        if int(fighter.inner.get(name, 0)) >= min(MAX_INNER_LEVEL, len(LEARN_THRESHOLDS[name])):
+        if fighter.own_level(name) >= min(MAX_INNER_LEVEL, len(LEARN_THRESHOLDS[name])):
             return "这种内功已经学满了"
         innate = self.char(fighter)["inner"]
         extra = [n for n in fighter.learn_progress if n not in innate]
@@ -522,15 +574,13 @@ class Rules:
 
     def learn(self, fighter: Fighter, name: str) -> None:
         gain = LEARN_MULTIPLIER.get(fighter.name, 1) * int(SCENES[fighter.scene].get("learn_multiplier", 1))
+        before = fighter.own_level(name)
         progress = fighter.learn_progress.get(name, 0) + gain
-        fighter.learn_progress[name] = progress
-        level = self.learned_level(name, progress)
-        leveled = level > int(fighter.inner.get(name, 0))
-        if leveled:
-            fighter.inner[name] = level
+        fighter.learn_progress[name] = progress          # 这一份进度是这个玩家所有人物共用的
+        level = fighter.own_level(name)
+        leveled = level > before
         need = next((n for n in LEARN_THRESHOLDS[name] if n > progress), None)
-        self._emit("learn", side=fighter.side, name=name, progress=progress,
-                   level=int(fighter.inner.get(name, 0)), leveled=leveled)
+        self._emit("learn", side=fighter.side, name=name, progress=progress, level=level, leveled=leveled)
         self._log(f"{self.label(fighter)}学{name}，学了{progress}下"
                   + (f"，升到{level}级。" if leveled else (f"，到{need}下升级。" if need else "。")))
 
@@ -550,8 +600,6 @@ class Rules:
         if decay:
             fighter.hp = min(int(fighter.hp), int(data["hp"]))
             fighter.inner = dict(data["inner"])
-            for name, progress in fighter.learn_progress.items():
-                fighter.inner[name] = max(int(fighter.inner.get(name, 0)), self.learned_level(name, progress))
         else:
             fighter.hp = int(data["hp"])
             for name, level in data["inner"].items():
@@ -570,7 +618,8 @@ class Rules:
         level = fighter.inner_level("大难不死")
         if level:
             probability = INNER_VALUES["大难不死"][level]
-            if self._chance(probability, fighter.side, f"{self.label(fighter)}的大难不死"):
+            if self._chance(probability, fighter.side, f"{self.label(fighter)}的大难不死发不发动",
+                            yes="这条命保住，恢复一部分体力", no="这条命没了"):
                 full = "真身" in self.traits(fighter)
                 fighter.hp = int(fighter.max_hp) if full else max(1, int(fighter.max_hp * probability))
                 self._emit("revive", side=fighter.side, **self.vitals(fighter))
@@ -605,7 +654,5 @@ class Rules:
         fighter.inner = dict(fighter.initial_inner)
         if fighter.name == "武圣" and fighter.lives_remaining < fighter.lives_total:
             fighter.inner.update({"幸运": 3, "大难不死": 2})
-        for name, progress in fighter.learn_progress.items():      # 学过的内功跟着人物，不随这条命丢掉
-            fighter.inner[name] = max(int(fighter.inner.get(name, 0)), self.learned_level(name, progress))
         self._emit("respawn", side=fighter.side, scene=fighter.scene, height=fighter.scene_height, **self.vitals(fighter))
         self._log(f"{self.label(fighter)}进入下一条命，体力、盾牌、状态、内功、场景、辐射和物品已重置。")

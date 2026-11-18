@@ -60,8 +60,15 @@ class Stage {
       <div class="fighter" data-side="${this.me}"><div class="hud"></div><div class="sprite"></div><div class="place"></div></div>
       <div class="gauge"></div>
       <div class="fighter" data-side="${this.foe}"><div class="hud"></div><div class="sprite"></div><div class="place"></div></div>
-      <div class="fx"></div><div class="banner" hidden></div>`;
+      <div class="fx"></div><div class="banner" hidden></div><div class="zeibox" hidden></div>`;
     this.fx = root.querySelector(".fx");
+  }
+  // 怎么称呼一方：上场的人看到“你”“对手”，观战和回放看到名字。
+  who(side) { return this.labels ? this.labels[side] : (side === this.me ? "你" : "对手"); }
+  // 把“A的武圣”这种写法换成“你的武圣”“对手的武圣”。
+  personal(text) {
+    if (this.labels) return String(text || "");
+    return String(text || "").split(this.me + "的").join("你的").split(this.foe + "的").join("对手的");
   }
 
   // ---------- 显示当前局面 ----------
@@ -97,7 +104,8 @@ class Stage {
     el.classList.toggle("down", !!f.defeated);
     if (this.spriteName[side] === f.name) return;
     this.spriteName[side] = f.name;
-    const standIn = `<div class="stand-in"><span>${esc(f.name.slice(0, 1))}</span><small>${esc(f.name)}</small></div>`;
+    const shown = f.name || "？";
+    const standIn = `<div class="stand-in"><span>${esc(shown.slice(0, 1))}</span><small>${esc(shown)}</small></div>`;
     el.innerHTML = ART.has(f.name) ? `<img alt="${esc(f.name)}" src="assets/characters/${encodeURIComponent(f.name)}.png">` : standIn;
   }
 
@@ -156,6 +164,23 @@ class Stage {
   flash(side, color = "#fff") {
     const s = this.box(side).querySelector(".sprite");
     return this.anim(s, [{ filter: "none" }, { filter: `drop-shadow(0 0 14px ${color}) brightness(1.6)` }, { filter: "none" }], 300);
+  }
+  // 贼出了结果：把双方每一把出的拳、谁赢了、赢了以后怎么样，摆在舞台中间给大家看。
+  async zeiResult(ev) {
+    Sfx.zei();
+    if (this.fast) return;
+    const el = this.root.querySelector(".zeibox"), L = this.me, R = this.foe, rounds = ev.rounds || [];
+    const rows = rounds.map((r, i) => `<div class="zr"><span>${HAND_GLYPH[r[L]] || "？"}<small>${esc(r[L] || "")}</small></span>
+      <i>${i < rounds.length - 1 ? "打平" : "对"}</i><span>${HAND_GLYPH[r[R]] || "？"}<small>${esc(r[R] || "")}</small></span></div>`).join("");
+    const result = ev.winner == null ? "打平" : this.who(ev.winner) + "赢";
+    const tone = ev.winner === L ? "win" : ev.winner === R ? "lose" : "";
+    el.innerHTML = `<div class="zt">贼：${esc(this.personal(ev.reason))}</div>
+      <div class="zn"><b>${esc(this.who(L))}</b><b>${esc(this.who(R))}</b></div>${rows}
+      <div class="zw ${tone}">${esc(result)}${ev.outcome ? "：" + esc(this.personal(ev.outcome)) : ""}</div>`;
+    el.hidden = false;
+    await this.anim(el, [{ opacity: 0 }, { opacity: 1 }], 160);
+    await this.wait(1500 + 500 * Math.max(0, rounds.length - 1));
+    el.hidden = true;
   }
   async announce(text, ms = 700) {
     if (this.fast) return;
@@ -242,7 +267,9 @@ class Stage {
       case "switch": {
         const sprite = this.box(ev.side).querySelector(".sprite"), d = this.dir(ev.side);
         await this.anim(sprite, [{ transform: "translateX(0)", opacity: 1 }, { transform: `translateX(${-70 * d}px)`, opacity: 0 }], 240, "ease-in");
-        const full = view.players[ev.side].team[ev.index];
+        // 上场的人物以事件里带的为准。网页手里的局面可能还是他上场之前的（那时候对手的这个人物还没亮出来）。
+        const listed = view && view.players[ev.side].team[ev.index];
+        const full = ev.fighter || (listed && !listed.hidden ? listed : { name: ev.name });
         this.model[ev.side] = Object.assign(JSON.parse(JSON.stringify(full)), {
           hp: ev.hp, max_hp: ev.max_hp, shield: ev.shield, max_shield: ev.max_shield, lives_remaining: ev.lives,
           lives_total: ev.lives_total, scene: ev.scene, height: ev.height, statuses: {}, parasites: {}, defeated: false });
@@ -349,7 +376,7 @@ class Stage {
         this.pop(ev.side, ev.name + " " + ev.progress + "/" + ev.of, "note");
         return this.wait(300);
       case "crit": this.pop(ev.side, "暴击", "hurt"); return this.wait(150);
-      case "zei": Sfx.zei(); return;
+      case "zei": return this.zeiResult(ev);
       case "phase": return this.wait(200);
       case "end": Sfx.win(); return this.announce("对战结束", 900);
       default: return;

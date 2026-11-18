@@ -307,7 +307,10 @@ class Room:
         if request and request["kind"] == "choose":
             side = request["askers"][0]
             if self.seats[side].is_bot:
-                battle.answer(self.rng.choice(request["options"])["id"])
+                options = request["options"]
+                # 第一项是“不做”的选择（不扔、不跑、不占卜）：电脑一半的时候选它，免得每回合都要贼
+                idle = options[0]["id"] == "" and self.rng.random() < 0.5
+                battle.answer((options[0] if idle else self.rng.choice(options))["id"])
                 return True
             return False
         for side in battle.waiting_for():
@@ -333,7 +336,7 @@ class Room:
     def _finish_zei(self) -> None:
         game, self.zei, self.throws = self.zei, None, {}
         self.last_zei = {"reason": self.battle.pending["reason"], "rounds": game.rounds, "winner": game.winner}
-        self.battle.answer(game.winner)
+        self.battle.answer(game.winner, detail=game.rounds)
 
     # ---------- 限时 ----------
 
@@ -424,6 +427,7 @@ class Room:
         view = self.battle.view()
         view.pop("pending")
         view.pop("waiting_for")
+        view["peek"] = None
         return view
 
     def replay_record(self) -> dict[str, Any]:
@@ -472,6 +476,8 @@ class Room:
             ]
         request = view.pop("pending")
         view.pop("waiting_for")
+        peeks = view.pop("peek")
+        view["peek"] = None if watcher else peeks[key]      # 透视到的招只给本人看
         reader = watcher or seat
         state["view"] = view
         state["events_from"] = reader.events_sent
@@ -497,6 +503,7 @@ class Room:
             prompt = {
                 "reason": request["reason"], "mode": request["mode"], "purpose": request["purpose"],
                 "choices": request.get("choices"), "so_far": request.get("so_far", []),
+                "stakes": request.get("stakes"), "series": request.get("series"), "sides": request["sides"],
                 "rounds": game.rounds if game else [],
                 "thrown": {s: s in self.throws for s in request["sides"]},
                 "redo_side": game.redo_side if game else None,
@@ -517,7 +524,7 @@ class Room:
     @staticmethod
     def _action_view(action: dict[str, Any]) -> dict[str, Any]:
         keys = ("id", "name", "attributes", "damage", "statuses", "defense", "distance", "target",
-                "effect", "description", "character", "action_kind", "tier", "legal", "reason",
+                "effect", "description", "character", "action_kind", "tier", "legal", "reason", "warning",
                 "inner", "progress", "next", "level")
         return {k: action.get(k) for k in keys}
 

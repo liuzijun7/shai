@@ -146,3 +146,24 @@ input[type="text"], select { background: var(--sheet); border: 1.5px solid var(-
 .clock:empty { display: none; }
 .clock.urgent { color: var(--red); }
 @media (max-width: 860px) { .lobby { grid-template-columns: 1fr; } }
+
+/* ---------- 试玩以后改的：贼的提示和结果、提醒、特点 ---------- */
+.prompt.zei { gap: 6px; }
+.zei-title { font-size: 1.05rem; }
+.series { margin: 0; font-weight: 700; color: var(--pen); }
+.stakes { display: grid; gap: 2px; }
+.stakes .win b { color: var(--ok); } .stakes .lose b { color: var(--red); }
+.peek { background: var(--hl); padding: 0 8px; border-radius: 4px; justify-self: start; }
+.action .warn { color: var(--red); }
+.traits { font-size: .85rem; }
+.zeibox { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 6; min-width: 260px; max-width: 86%;
+  background: var(--sheet); border: 3px solid var(--ink); border-radius: 12px; padding: 12px 18px; display: grid; gap: 6px; text-align: center;
+  box-shadow: 0 8px 0 rgba(0, 0, 0, .12); }
+.zeibox .zt { font-weight: 700; }
+.zeibox .zn, .zeibox .zr { display: grid; grid-template-columns: 1fr 44px 1fr; align-items: center; }
+.zeibox .zn b:last-child { grid-column: 3; }
+.zeibox .zr span { font-size: 2.4rem; line-height: 1.1; display: grid; }
+.zeibox .zr span small { font-size: .8rem; color: var(--muted); }
+.zeibox .zr i { font-style: normal; color: var(--muted); font-size: .85rem; }
+.zeibox .zw { font-weight: 800; font-size: 1.1rem; border-top: 1px solid var(--rule); padding-top: 6px; }
+.zeibox .zw.win { color: var(--ok); } .zeibox .zw.lose { color: var(--red); }

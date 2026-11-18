@@ -20,8 +20,9 @@ def settle(battle, zei="A", pick=0):
 
 
 def play(battle, a, b, zei="A"):
-    battle.choose("A", a)
-    battle.choose("B", b)
+    order = ("A", "B") if "A" in battle.waiting_for() else ("B", "A")     # 能透视的一方后选
+    for side in order:
+        battle.choose(side, a if side == "A" else b)
     settle(battle, zei)
 
 
@@ -80,20 +81,35 @@ class BasicRules(unittest.TestCase):
         self.assertFalse(b.fighter("B").defeated)
 
     def test_range_uses_height_gap(self):
-        b = Battle(["拳术宗师"], ["武圣"], seed=1, true_body=False)
-        b.fighter("B").scene = "宇宙"
+        # 饕餮不能打全宇宙。对手在上面：普通的招够不着，能往上打的招够得着，神技不受限制。
+        b = Battle(["饕餮"], ["武圣"], seed=1, true_body=False)
+        b.fighter("B").scene = "电离层"                          # 比地面高 3 层
         self.assertFalse(legal(b, "A")["0"]["legal"])
-        self.assertTrue(legal(b, "A")["6"]["legal"])
+        self.assertIn("够不着", legal(b, "A")["0"]["reason"])
+        self.assertTrue(legal(b, "A")["6"]["legal"])             # 圣六式空凌能往上打 3 层
+        b.fighter("B").scene = "宇宙"
+        self.assertFalse(legal(b, "A")["6"]["legal"])
+        self.assertTrue(legal(b, "A")["32"]["legal"])            # 神技打得到
+        # 在上面的人默认打得到下面的人。
+        b = Battle(["陶渊明"], ["武圣"], seed=1, true_body=False)
+        b.fighter("B").scene = "外地核"
+        self.assertTrue(legal(b, "A")["30"]["legal"])            # 悬心拳
+        b.fighter("B").scene = "对流层"
+        self.assertFalse(legal(b, "A")["30"]["legal"])
+        # 能打全宇宙的人物出什么招都打得到。
+        b = Battle(["武圣"], ["饕餮"], seed=1, true_body=False)
+        b.fighter("B").scene = "宇宙边缘"
+        self.assertTrue(legal(b, "A")["0"]["legal"])
 
     def test_lost_life_resets_state(self):
-        b = Battle(["拳术宗师"], ["宋濂"], seed=2, true_body=False)
+        b = Battle(["拳术宗师"], ["武圣"], seed=2, true_body=False)    # 武圣有 2 条命
         target = b.fighter("B")
         target.hp = 1
         target.resources["星体能量"] = 7
         target.statuses["烧伤"] = Status("烧伤", 3, "A")
         play(b, "0", "d2")
         target = b.fighter("B")     # 结算会重建人物对象，要重新取
-        self.assertEqual(target.lives_remaining, 2)
+        self.assertEqual(target.lives_remaining, 1)
         self.assertEqual(target.hp, target.max_hp)
         self.assertEqual(target.resources["星体能量"], 0)
         self.assertNotIn("烧伤", target.statuses)
@@ -219,6 +235,7 @@ class ShenRules(unittest.TestCase):
     def test_wizard_shen_is_unlimited(self):
         b = Battle(["巫师"], ["欧阳修"], seed=1, true_body=False)   # 欧阳修血厚，挨得住幻影的四连击
         play(b, "33", "d1")
+        b.choose("B", "d1")              # 灵气寒霜指打出了透视：对手先选，巫师看到以后再选
         self.assertTrue(legal(b, "A")["33"]["legal"])
 
 

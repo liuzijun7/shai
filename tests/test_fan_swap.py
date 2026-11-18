@@ -16,12 +16,13 @@ class FanSwap(unittest.TestCase):
     def test_the_two_fighters_change_sides_with_everything_they_have(self):
         b = Battle(["范仲淹"], ["拳术宗师"], seed=1, true_body=False)
         b.fighter("B").hp = 60000
-        b.fighter("B").learn_progress["幸运"] = 3
+        b.fighter("B").learn_progress["幸运"] = 5                   # 对面的玩家学了幸运 1 级
         play(b, "t7", "d2")
         mine, theirs = b.fighter("A"), b.fighter("B")
         self.assertEqual((mine.name, mine.side, mine.hp), ("拳术宗师", "A", 60000))
         self.assertEqual(mine.inner["蛮力"], 3)                     # 内功跟着人物过来
-        self.assertEqual(mine.learn_progress["幸运"], 3)            # 学了一半的内功也跟着
+        self.assertEqual(mine.inner_level("幸运"), 0)               # 学来的内功归玩家，不跟着人物过来
+        self.assertEqual(theirs.inner_level("幸运"), 1)             # 换过去的范仲淹用上了那个玩家学的内功
         self.assertEqual((theirs.name, theirs.side, theirs.hp), ("范仲淹", "B", 100000))
         self.assertIn("t7", [a["id"] for a in b.legal_actions("B")])   # 对面现在可以用范仲淹的招
         self.assertNotIn("t7", [a["id"] for a in b.legal_actions("A")])
