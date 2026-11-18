@@ -842,7 +842,8 @@ class Battle(Rules, Actions, TurnStart, Forms):
             "shield": f.shield, "max_shield": f.max_shield, "lives_remaining": f.lives_remaining,
             "lives_total": f.lives_total, "distance": "无穷" if f.distance == inf else f.distance,
             "scene": f.scene, "height": f.scene_height, "inner": f.all_inner(),
-            "borrowed": sorted(n for n, level in f.all_inner().items() if level > int(f.inner.get(n, 0))),
+            "borrowed": sorted(n for n, level in f.all_inner().items() if level > f.own_level(n)),      # 借来的
+            "learned": sorted(n for n in f.learn_progress if f.learned_level(n) > int(f.inner.get(n, 0))),  # 玩家学来的
             "traits": sorted(self.traits(f)),
             "statuses": {n: {"turns": s.turns, "layer": s.layer} for n, s in f.statuses.items()},
             "parasites": {n: {"count": p.count, "layer": p.layer} for n, p in f.parasites.items()},

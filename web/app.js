@@ -276,9 +276,9 @@ function benchHtml(side) {
     return `<span class="chip ${f.defeated ? "out" : ""}">${esc(f.name)}${f.defeated ? "" : " " + f.hp}</span>`;
   }).join("");
   const active = p.team[p.active];
-  const lent = new Set(active.borrowed || []);
+  const lent = new Set(active.borrowed || []), learned = new Set(active.learned || []);
   const inner = Object.entries(active.inner || {}).filter(([, v]) => v > 0)
-    .map(([k, v]) => `<span class="chip">${esc(k)}${v}${lent.has(k) ? "（借）" : ""}</span>`).join("");
+    .map(([k, v]) => `<span class="chip">${esc(k)}${v}${lent.has(k) ? "（借对手的）" : learned.has(k) ? "（学的）" : ""}</span>`).join("");
   const traits = traitText(active.traits);
   const items = Object.entries(active.resources || {}).filter(([, v]) => v > 0).map(([k, v]) => `<span class="chip">${esc(k)} ${v}</span>`).join("");
   const devices = Object.entries(active.devices || {}).filter(([, v]) => v > 0).map(([k, v]) => `<span class="chip">${esc(k)} 造了 ${v} 下</span>`).join("");

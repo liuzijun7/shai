@@ -168,3 +168,4 @@ input[type="text"], select { background: var(--sheet); border: 1.5px solid var(-
 .zeibox .zw { font-weight: 800; font-size: 1.1rem; border-top: 1px solid var(--rule); padding-top: 6px; }
 .zeibox .zw.win { color: var(--ok); } .zeibox .zw.lose { color: var(--red); }
 .again { margin: 0; font-weight: 800; font-size: 1.05rem; color: var(--pen); background: var(--hl); padding: 2px 10px; border-radius: 4px; justify-self: start; }
+.zeibox .zs { color: var(--muted); font-size: .9rem; }
