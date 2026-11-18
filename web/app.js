@@ -334,6 +334,8 @@ function promptHtml() {
     const count = series ? `<p class="series">要连赢 ${series.need} 把才算数。现在是第 ${series.index} 把。</p>` : "";
     const hand = (r, side) => `${esc(who(side))} ${HAND_GLYPH[r[side]]} ${esc(r[side])}`;
     const rounds = (p.rounds || []).map((r, i) => `<li>这一次贼的第 ${i + 1} 把：${hand(r, L)}，${hand(r, R)}${r[L] === r[R] ? "，打平" : ""}</li>`).join("");
+    const played = (p.rounds || []).length;
+    const again = played ? `<p class="again">上一把打平了。现在出第 ${played + 1} 把。</p>` : "";
     const shown = p.choices ? `<p>${esc(who(L))}出的招是【${esc(p.choices[L].name)}】，${esc(who(R))}出的招是【${esc(p.choices[R].name)}】。</p>` : "";
     let body;
     if (S.need === "throw") body = `<div class="row hands">${HAND_NAMES.map((h) => `<button class="primary" data-hand="${h}"><span>${HAND_GLYPH[h]}</span> ${h}</button>`).join("")}</div>`;
@@ -343,7 +345,7 @@ function promptHtml() {
     else body = `<p class="muted">等双方出拳…</p>`;
     return `<div class="panel prompt zei ${S.need === "throw" || S.need === "redo" ? "" : "wait"}">
       <b class="zei-title">贼：${esc(personal(p.reason))}</b>${count}
-      <div class="stakes">${line(L, "win")}${line(R, "lose")}${tie}</div>${shown}${rounds ? `<ul>${rounds}</ul>` : ""}${body}</div>`;
+      <div class="stakes">${line(L, "win")}${line(R, "lose")}${tie}</div>${shown}${rounds ? `<ul>${rounds}</ul>` : ""}${again}${body}</div>`;
   }
   if (inGame() && S.need === "wait" && !S.view.chosen[me.side] && sees[me.side]) {
     return `<div class="panel prompt wait"><b>你能透视对手。</b><span class="muted">等对手先选招，你看到他选了什么以后再选。</span></div>`;
