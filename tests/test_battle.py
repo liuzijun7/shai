@@ -88,9 +88,18 @@ class BasicRules(unittest.TestCase):
         self.assertIn("够不着", legal(b, "A")["0"]["reason"])
         self.assertTrue(legal(b, "A")["6"]["legal"])             # 圣六式空凌能往上打
         self.assertTrue(legal(b, "A")["21"]["legal"])            # 雷神之怒也能
-        self.assertFalse(legal(b, "A")["10"]["legal"])           # 寒潮不能往上打
+        self.assertTrue(legal(b, "A")["10"]["legal"])            # 寒潮能打大气层之内，电离层是最高的一层
+        self.assertTrue(legal(b, "A")["13"]["legal"])            # 声波炮一样
+        b.fighter("A").resources["星体能量"] = 3
+        b.fighter("B").scene = "宇宙"
+        self.assertFalse(legal(b, "A")["10"]["legal"])           # 出了大气层，寒潮打不到
+        self.assertIn("大气层之内", legal(b, "A")["10"]["reason"])
+        self.assertTrue(legal(b, "A")["23"]["legal"])            # 太阳黑子爆能打宇宙
+        b.fighter("B").scene = "外太空"
+        self.assertTrue(legal(b, "A")["23"]["legal"])            # 也能打外太空
         b.fighter("B").scene = "宇宙边缘"
-        self.assertTrue(legal(b, "A")["6"]["legal"])             # 多高都打得到
+        self.assertFalse(legal(b, "A")["23"]["legal"])           # 打不到宇宙边缘
+        self.assertTrue(legal(b, "A")["6"]["legal"])             # 圣六式空凌多高都打得到
         self.assertTrue(legal(b, "A")["32"]["legal"])            # 神技打得到
         # 在上面的人默认打得到下面的人。
         b = Battle(["陶渊明"], ["武圣"], seed=1, true_body=False)

@@ -104,6 +104,16 @@ class AnswersOf1118(unittest.TestCase):
         self.assertIn("免疫魔法", legal(b, "A")["3"]["warning"])    # 点穴手是魔法
         self.assertEqual(legal(b, "A")["5"]["warning"], "")        # 吼是物理
 
+    def test_your_own_signature_move_does_not_seal_you(self):
+        b = fight("生化大师", "武圣")
+        b.fighter("A").inner = {}
+        play(b, "29", "d1")                                 # 乙醚是生化大师的大招（化学加特技）
+        self.assertFalse(b.fighter("A").has_status("封喉"))
+        self.assertTrue(legal(b, "A")["28"]["legal"])        # 下一回合还能接着用硫酸
+        b = fight("武圣", "欧阳修")
+        play(b, "29", "d1")                                 # 别人用乙醚，照常被封喉 3 回合
+        self.assertTrue(b.fighter("A").has_status("封喉"))
+
     def test_fat_dragon_reaches_everywhere(self):
         b = fight("肥龙王", "武圣")
         settle(b)

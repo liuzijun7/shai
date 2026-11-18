@@ -16,7 +16,7 @@ from .data import (
     ALL_INNER_NAMES, CHARACTERS, CONTROL_STATUSES, DAMAGE_STATUSES, FIRE_SKILL_NAMES, ICE_SKILL_NAMES,
     INNER_VALUES, LEARN_MULTIPLIER,
     LEARN_THRESHOLDS, MAX_INNER_LEVEL, MAX_LEARNED_INNER, SCENES, SELF_BUFFS, SURE_HIT_IDS, VERTICAL_SCENES,
-    accelerator_level,
+    accelerator_level, is_signature,
 )
 from .model import Fighter, Parasite, RuleError, Status
 
@@ -372,8 +372,8 @@ class Rules:
         self._log(f"{self.label(actor)}收集{quantity}个{resource}，现有{actor.resources[resource]}。")
 
     def after_special(self, actor: Fighter, spec: dict[str, Any]) -> None:
-        """特技用完，自己被封喉 3 回合。"""
-        if "特技" in spec["attributes"]:
+        """特技用完，自己被封喉 3 回合。自己的大招不算（雨晨：生化大师用硫酸、乙醚不会把自己封住）。"""
+        if "特技" in spec["attributes"] and not is_signature(actor.name, spec):
             self.apply_status(actor, "封喉", 3, actor.side, force_body=True)
 
     # ---------- 辐射、场景移动 ----------

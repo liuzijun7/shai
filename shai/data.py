@@ -65,8 +65,19 @@ SKILLS["28"]["attributes"] = ("化学", "特技")          # 硫酸（化学）
 SKILLS["29"]["attributes"] = ("化学", "特技")          # 乙醚（化学）
 # 摄魂大法本来就是魔法。昏睡绦虫、蚂蟥、太阳黑子爆照引擎，不改。
 
-# 能往上打的招（雨晨）。不能打全宇宙的人物，在下面只有用这几个招、或者神技，才打得到上面的人。
-UP_REACH_IDS = {"6", "x7", "x8", "21", "c_newton_cloud"}   # 圣六式空凌、一零二仙折、七八五重雷、雷神之怒、云端之星
+# 能往上打的招，和它最高能打到哪一层（雨晨）。不能打全宇宙的人物，在下面只有用这些招、或者神技，
+# 才打得到上面的人。在上面打下面、打同一层，什么招都行。
+ATMOSPHERE_TOP = SCENES["电离层"]["height"]      # 大气层最高的一层
+OUTER_SPACE = SCENES["外太空"]["height"]         # 宇宙边缘的下面一层
+UP_REACH = {
+    # 多高都打得到：圣六式空凌、一零二仙折、七八五重雷、雷神之怒、云端之星
+    "6": inf, "x7": inf, "x8": inf, "21": inf, "c_newton_cloud": inf,
+    # 只能打大气层之内（对流层、平流层、电离层）：天雷、布拉风、火山爆发、台风、寒潮、声波炮
+    "x1": ATMOSPHERE_TOP, "x11": ATMOSPHERE_TOP, "11": ATMOSPHERE_TOP, "c_dragon_typhoon": ATMOSPHERE_TOP,
+    "10": ATMOSPHERE_TOP, "13": ATMOSPHERE_TOP,
+    # 能打到宇宙和外太空，打不到宇宙边缘：行星撞地球、太阳黑子爆
+    "x9": OUTER_SPACE, "23": OUTER_SPACE,
+}
 LOAN_TURNS = 5                                              # 宋濂借一种内功最多借这么多回合（本子）
 
 # 纵目青铜怪的换血是一个要选的招，不是每回合自动（雨晨）。

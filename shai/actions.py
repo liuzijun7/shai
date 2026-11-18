@@ -163,7 +163,7 @@ class Actions:
                 self.kill_current_life(target, actor.side, all_lives=False, reason="硫酸秒杀")
             else:
                 self._log("硫酸的秒杀没有触发。")
-            return
+            return self.after_special(actor, spec)
         if effect == "ether":
             if actor.name in {"生化大师", "猪带小天王"}:
                 self.apply_status(target, "昏睡", self.duration(actor, spec, 5), actor.side)
@@ -173,7 +173,7 @@ class Actions:
                 target.counters.setdefault("delayed_effects", []).append(
                     {"remaining": 2, "status": "昏睡", "turns": self.duration(actor, spec, 5), "source": actor.side})
                 self._log(f"{L(target)}将在两个自己的回合后昏睡。")
-            return
+            return self.after_special(actor, spec)      # 乙醚现在带特技：用完自己被封喉（自己的大招除外）
         if effect == "pork_tapeworm":
             return self.add_parasite(target, "猪带绦虫", reps, actor.side)
         if effect == "sleep_tapeworm":

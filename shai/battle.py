@@ -22,7 +22,7 @@ from math import inf
 from typing import Any
 
 from .actions import Actions
-from .data import ACCELERATOR_BIG, NO_SELF_EFFECTS, UP_REACH_IDS, accelerator_level
+from .data import ACCELERATOR_BIG, NO_SELF_EFFECTS, UP_REACH, accelerator_level
 from .data import (
     CHARACTERS, CHARACTER_NAME_TO_ID, FIRST_STRIKE_IDS, LEARN_THRESHOLDS, SCENES, SEAL_BY_ATTRIBUTE,
     SELF_BUFFS, SKILLS,
@@ -844,12 +844,17 @@ class Battle(Rules, Actions, TurnStart, Forms):
         any_scene = effect == "accelerator" and actor.devices.get("粒子加速器", 0) >= ACCELERATOR_BIG["builds"]
         # 够不够得着（雨晨）：在上面的人默认打得到下面的人；在下面的人默认打不到上面的人，
         # 除非这个招本身能往上打；神技不受限制；能打全宇宙的人物出什么招都打得到。
-        any_scene = any_scene or "神技" in spec["attributes"] or spec["id"] in UP_REACH_IDS
-        # 能往上打的招是雨晨点名的那几个（圣六式空凌、一零二仙折、七八五重雷、雷神之怒、云端之星）。
+        any_scene = any_scene or "神技" in spec["attributes"]
+        # 哪些招能往上打、最高打到哪一层，是雨晨逐个定的（见 data.py 的 UP_REACH）。
         # 引擎原来的“人物距离”和“招的距离”这两个数不用了。
         if spec["target"] == "enemy" and actor.distance != inf and not any_scene \
                 and target.scene_height > actor.scene_height:
-            return "够不着：对手在你上面，这个招不能往上打"
+            top = UP_REACH.get(spec["id"])
+            if top is None:
+                return "够不着：对手在你上面，这个招不能往上打"
+            if target.scene_height > top:
+                limit = "大气层之内（最高到电离层）" if top <= 3 else "外太空"
+                return f"够不着：对手在{target.scene}，这个招往上最高只能打到{limit}"
         return None
 
     def _warning(self, target: Fighter, spec: dict[str, Any]) -> str:
