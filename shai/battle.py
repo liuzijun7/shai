@@ -22,7 +22,7 @@ from math import inf
 from typing import Any
 
 from .actions import Actions
-from .data import ACCELERATOR_BIG, accelerator_level
+from .data import ACCELERATOR_BIG, NO_SELF_EFFECTS, accelerator_level
 from .data import (
     CHARACTERS, CHARACTER_NAME_TO_ID, FIRST_STRIKE_IDS, LEARN_THRESHOLDS, SCENES, SEAL_BY_ATTRIBUTE,
     SELF_BUFFS, SKILLS,
@@ -145,7 +145,8 @@ class Battle(Rules, Actions, TurnStart, Forms):
         if side in self.choices or other not in self.choices or other in self.skipping or not self._sees_through(side):
             return None
         spec = self.choices[other]["spec"]
-        return {"id": spec["id"], "name": spec["name"], "destination": self.choices[other]["destination"]}
+        return {"id": spec["id"], "name": spec["name"], "destination": self.choices[other]["destination"],
+                "on_self": bool(self.choices[other].get("on_self"))}
 
     def legal_actions(self, side: str) -> list[dict[str, Any]]:
         actor, target = self.fighter(side), self.fighter(self.other(side))
@@ -167,6 +168,10 @@ class Battle(Rules, Actions, TurnStart, Forms):
             reason = blocked_all or self._illegal_reason(actor, target, spec)
             entry = {**spec, "tier": self._tier(actor, spec), "legal": reason is None, "reason": reason or "",
                      "warning": self._warning(target, spec)}
+            if spec["target"] == "enemy" and spec["action_kind"] == "skill" and spec["effect"] not in NO_SELF_EFFECTS:
+                # 打自己：不看够不够得着，别的限制（被封、东西不够）照旧
+                self_reason = blocked_all or self._illegal_reason(actor, actor, spec)
+                entry["self_ok"], entry["self_reason"] = self_reason is None, self_reason or ""
             if spec["effect"] in {"build_accelerator", "accelerator"}:
                 built = int(actor.devices.get("粒子加速器", 0))
                 entry["damage"] = self.character_damage(actor, spec)
@@ -195,20 +200,29 @@ class Battle(Rules, Actions, TurnStart, Forms):
             })
         return result
 
-    def choose(self, side: str, action_id: str, destination: str | None = None) -> None:
+    def choose(self, side: str, action_id: str, destination: str | None = None, on_self: bool = False) -> None:
+        """选这回合的招。on_self：把一个本来打对手的招改成打自己。"""
         if side not in SIDES:
             raise RuleError("未知的一方。")
         actions = {a["id"]: a for a in self.legal_actions(side)}
         if action_id not in actions:
             raise RuleError(f"未知动作：{action_id}")
         action = actions[action_id]
-        if not action["legal"]:
+        if on_self:
+            if "self_ok" not in action:
+                raise RuleError("这个动作不能对自己用。")
+            if not action["self_ok"]:
+                raise RuleError(action["self_reason"] or "现在不能执行这个动作。")
+        elif not action["legal"]:
             raise RuleError(action["reason"] or "现在不能执行这个动作。")
         if action["effect"] == "choose_scene" and destination not in SCENES:
             raise RuleError("这个动作需要选一个场景。")
-        self.choices[side] = {"spec": action, "destination": destination,
+        self.choices[side] = {"spec": action, "destination": destination, "on_self": bool(on_self),
                               "lives": self.fighter(side).lives_remaining}
-        self.history.append({"type": "choose", "side": side, "action": action_id, "destination": destination})
+        step = {"type": "choose", "side": side, "action": action_id, "destination": destination}
+        if on_self:
+            step["on_self"] = True
+        self.history.append(step)
         if len(self.choices) == 2:
             self._begin("round")
 
@@ -537,7 +551,7 @@ class Battle(Rules, Actions, TurnStart, Forms):
         reflected: set[str] = set()
         for defender, attacker in (("A", "B"), ("B", "A")):
             d_spec, a_spec = specs[defender], specs[attacker]
-            if a_spec["target"] != "enemy" or attacker in cancelled:
+            if a_spec["target"] != "enemy" or attacker in cancelled or entries[attacker].get("on_self"):
                 continue
             code = DEFENSE_CODE.get(d_spec["id"])
             if code is not None and a_spec["defense"] == code:
@@ -580,6 +594,11 @@ class Battle(Rules, Actions, TurnStart, Forms):
                 continue
             if "神技" in spec["attributes"] and actor.name != "巫师":
                 actor.used_shen.add(spec["id"])
+            if entries[side].get("on_self"):            # 打自己：不用躲，对手也挡不了；伤害照算
+                self._emit("move", **self._move_data(actor, actor, spec), on_self=True)
+                self._log(f"{self.label(actor)}对自己使用【{spec['name']}】。")
+                self.resolve_action(actor, actor, spec, entries[side]["destination"])
+                continue
             if side in blocked:
                 self._emit("move", **self._move_data(actor, target, spec), blocked=True)
                 self._emit("block", side=target.side, attacker=side, by=blocked[side], skill=spec["name"])

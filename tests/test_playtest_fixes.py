@@ -78,6 +78,32 @@ class KubaHelper(unittest.TestCase):
         self.assertIsNone(b.pending)
 
 
+class AimAtYourself(unittest.TestCase):
+    def test_any_move_can_be_used_on_yourself(self):
+        b = fight("陶渊明", "武圣")
+        b.fighter("B").scene = "宇宙"                       # 对手在天上，陶渊明够不着
+        self.assertFalse(legal(b, "A")["0"]["legal"])
+        self.assertTrue(legal(b, "A")["0"]["self_ok"])
+        self.assertTrue(legal(b, "A")["6"]["self_ok"])
+        self.assertNotIn("self_ok", legal(b, "A")["d1"])     # 防御没有“打自己”
+        b.choose("A", "6", on_self=True)                    # 圣六式空凌打自己：挨一下，往上飞一层
+        b.choose("B", "d3")                                 # 对手的防御 3 挡不了
+        self.assertIsNone(b.pending)                        # 陶渊明有虚空神术，但打自己不用躲
+        me = b.fighter("A")
+        self.assertEqual(me.hp, 150000 - 20000)
+        self.assertEqual(me.scene, "对流层")
+        self.assertIn("A的陶渊明对自己使用【圣六式空凌】。", b.log)
+
+    def test_you_can_kill_yourself_and_da_nan_bu_si_still_rolls(self):
+        b = fight("饕餮", "武圣")                           # 饕餮有大难不死 3
+        b.fighter("A").hp = 5000
+        b.choose("A", "0", on_self=True)
+        b.choose("B", "d1")
+        self.assertEqual(b.pending["reason"], "A的饕餮的大难不死发不发动")
+        b.answer("B")
+        self.assertTrue(b.fighter("A").defeated)
+
+
 class BorrowedInner(unittest.TestCase):
     def test_song_lian_borrows_only_from_the_fighter_on_the_field(self):
         b = fight("宋濂", ["巫师", "武圣"])

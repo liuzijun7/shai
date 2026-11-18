@@ -176,3 +176,5 @@ input[type="text"], select { background: var(--sheet); border: 1.5px solid var(-
 .zeibox .hands { justify-content: center; }
 .zeibox .again { justify-self: center; }
 .zeibox .clock { justify-self: center; }
+.aim button[aria-pressed="true"] { background: var(--ink); color: var(--sheet); border-color: var(--ink); }
+.aim .warn { color: var(--red); font-size: .85rem; }

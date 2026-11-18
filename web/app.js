@@ -29,7 +29,7 @@ let played = 0;           // 已经播过动画的事件条数
 let playing = false;
 let run = 0;              // 第几轮播放。换了一局以后，上一轮还没播完的动画不再往下播
 function resetPlayback() { stage = null; played = 0; playing = false; run++; }
-const ui = { picked: [], tab: "全部", search: "", sceneAction: null, wanted: null };
+const ui = { picked: [], tab: "全部", search: "", sceneAction: null, wanted: null, aim: "foe" };   // aim：这一招打对手还是打自己
 const HAND_NAMES = ["石头", "剪刀", "布"];
 const HAND_GLYPH = { "石头": "✊", "剪刀": "✌", "布": "✋" };
 const TABS = ["全部", "技能", "神技", "防御", "物品", "专属", "内功", "换人"];
@@ -318,7 +318,7 @@ function promptHtml() {
   const sees = (S.view && S.view.sees) || {};
   if (S.need === "choose") {
     const peek = S.view.peek;
-    const note = peek ? `<span class="peek">透视：对手这回合选了【${esc(peek.name)}】${peek.destination ? "（去" + esc(peek.destination) + "）" : ""}。</span>`
+    const note = peek ? `<span class="peek">透视：对手这回合选了【${esc(peek.name)}】${peek.on_self ? "（打他自己）" : ""}${peek.destination ? "（去" + esc(peek.destination) + "）" : ""}。</span>`
       : (inGame() && sees[R] ? `<span class="muted">对手能透视你：你选完以后他才选，他看得到你选了什么。</span>` : "");
     return `<div class="panel prompt"><b>请选这回合的招。</b>${note}</div>`;
   }
@@ -389,7 +389,9 @@ function category(a) {
 
 function actionsHtml() {
   if (S.need !== "choose" || playing) return "";
-  const list = (S.actions || []).filter((a) => (ui.tab === "全部" || category(a) === ui.tab) && (!ui.search || a.name.includes(ui.search)));
+  const self = ui.aim === "self";                    // 打自己的时候只列能对自己用的招
+  const list = (S.actions || []).filter((a) => (ui.tab === "全部" || category(a) === ui.tab) && (!ui.search || a.name.includes(ui.search))
+    && (!self || a.self_ok != null));
   const tier = (t) => (t >= 60 ? "换人最先" : t >= 40 ? "比神技快" : t >= 30 ? "神技档" : t >= 20 ? "先手" : "");
   return list.map((a) => {
     const info = [a.attributes.join("+") || (a.action_kind === "skill" ? "无属性" : ""), a.damage ? "伤害 " + a.damage / 10000 + " 万" : "",
@@ -398,9 +400,10 @@ function actionsHtml() {
       ? "现在 " + a.level + " 级，学了 " + a.progress + " 下" + (a.next ? "，到 " + a.next + " 下升级" : "")
       : (a.statuses || []).map(([n, t]) => n + t).join(" ");
     const color = ATTR_COLOR[a.attributes[0]] || "transparent";
-    return `<button class="action" style="border-left-color:${color}" data-action="${esc(a.id)}" ${a.legal ? "" : "disabled"} title="${esc(a.legal ? a.description || "" : a.reason)}">
-      <b>${esc(a.name)}</b><small>${esc(info)}</small>${extra ? `<small>${esc(extra)}</small>` : ""}${a.legal ? "" : `<small>${esc(a.reason)}</small>`}${a.legal && a.warning ? `<small class="warn">${esc(a.warning)}</small>` : ""}</button>`;
-  }).join("") || `<span class="muted">没有符合的招。</span>`;
+    const ok = self ? a.self_ok : a.legal, why = self ? a.self_reason : a.reason;
+    return `<button class="action" style="border-left-color:${color}" data-action="${esc(a.id)}" ${ok ? "" : "disabled"} title="${esc(ok ? a.description || "" : why)}">
+      <b>${esc(a.name)}</b><small>${esc(info)}</small>${extra ? `<small>${esc(extra)}</small>` : ""}${ok ? "" : `<small>${esc(why)}</small>`}${!self && ok && a.warning ? `<small class="warn">${esc(a.warning)}</small>` : ""}</button>`;
+  }).join("") || `<span class="muted">${self ? "这一类里没有能对自己用的招。" : "没有符合的招。"}</span>`;
 }
 
 function appendLog(text) {
@@ -443,6 +446,8 @@ function renderControls() {
   $("#actionbox").hidden = !choosing;
   if (!choosing) ui.sceneAction = null;
   $("#tabs").innerHTML = TABS.map((t) => `<button data-tab="${t}" aria-pressed="${t === ui.tab}">${t}</button>`).join("");
+  $("#aim").innerHTML = `<span>这一招打：</span><button data-aim="foe" aria-pressed="${ui.aim === "foe"}">对手</button><button data-aim="self" aria-pressed="${ui.aim === "self"}">自己</button>
+    ${ui.aim === "self" ? `<span class="warn">打自己：不用躲，够不着也能用，伤害和特效都落在自己身上。</span>` : ""}`;
   $("#scenepick").innerHTML = ui.sceneAction ? `<div class="row"><b>去哪个场景？</b>${scenes.map((s) => `<button data-scene="${esc(s.name)}">${esc(s.name)}</button>`).join("")}<button>取消</button></div>` : "";
   $("#actions").innerHTML = actionsHtml();
   renderChat();
@@ -489,6 +494,7 @@ function renderBattle() {
       <div class="lower">
         <div class="panel" id="actionbox">
           <div class="row"><div class="row tabs" id="tabs"></div><input type="text" id="search" placeholder="搜招式名字"></div>
+          <div class="row aim" id="aim"></div>
           <div id="scenepick"></div>
           <div class="actions" id="actions"></div>
         </div>
@@ -500,8 +506,10 @@ function renderBattle() {
     $("#actions").onclick = (ev) => {
       const b = ev.target.closest(".action"); if (!b || b.disabled) return;
       const action = S.actions.find((a) => a.id === b.dataset.action);
-      if (action.effect === "choose_scene") { ui.sceneAction = action.id; renderControls(); } else send({ t: "choose", action: action.id });
+      if (action.effect === "choose_scene") { ui.sceneAction = action.id; renderControls(); }
+      else { send({ t: "choose", action: action.id, on_self: ui.aim === "self" }); ui.aim = "foe"; }
     };
+    $("#aim").onclick = (ev) => { const b = ev.target.closest("button"); if (b) { ui.aim = b.dataset.aim; renderControls(); } };
     $("#scenepick").onclick = (ev) => {
       const b = ev.target.closest("button"); if (!b) return;
       if (b.dataset.scene) send({ t: "choose", action: ui.sceneAction, destination: b.dataset.scene });

@@ -49,7 +49,9 @@ class Rules:
     # ---------- 命中和免疫 ----------
 
     def skill_hits(self, actor: Fighter, target: Fighter, spec: dict[str, Any]) -> bool:
-        """这一招打不打得中。没打中的话在这里把原因写进战报。神技必中（雨晨）。"""
+        """这一招打不打得中。没打中的话在这里把原因写进战报。神技必中（雨晨）。打自己不用躲。"""
+        if actor is target:
+            return True
         if "必中" in self.traits(actor) or spec["id"] in SURE_HIT_IDS or "神技" in spec["attributes"]:
             return True
         name, a, t = spec["name"], self.label(actor), self.label(target)

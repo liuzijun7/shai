@@ -17,7 +17,7 @@ def rebuild(record: dict[str, Any]) -> Battle:
     battle = Battle(record["teams"]["A"], record["teams"]["B"], seed=record["seed"], zei=record["zei"])
     for step in record["history"]:
         if step["type"] == "choose":
-            battle.choose(step["side"], step["action"], step.get("destination"))
+            battle.choose(step["side"], step["action"], step.get("destination"), bool(step.get("on_self")))
         else:
             battle.answer(step["value"], step.get("detail"))
     return battle

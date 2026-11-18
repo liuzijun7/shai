@@ -193,7 +193,7 @@ class Room:
 
     def _on_choose(self, side: str, m: dict[str, Any]) -> None:
         self._battle_only()
-        self.battle.choose(side, str(m.get("action")), m.get("destination"))
+        self.battle.choose(side, str(m.get("action")), m.get("destination"), on_self=bool(m.get("on_self")))
 
     def _on_throw(self, side: str, m: dict[str, Any]) -> None:
         self._battle_only()
@@ -525,6 +525,7 @@ class Room:
     def _action_view(action: dict[str, Any]) -> dict[str, Any]:
         keys = ("id", "name", "attributes", "damage", "statuses", "defense", "distance", "target",
                 "effect", "description", "character", "action_kind", "tier", "legal", "reason", "warning",
+                "self_ok", "self_reason",
                 "inner", "progress", "next", "level")
         return {k: action.get(k) for k in keys}
 

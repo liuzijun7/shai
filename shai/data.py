@@ -100,6 +100,9 @@ _extra("x13", "三聚氰胺", ["化学", "物品"], 0, [], 1, 0, effect="melamin
 
 EXTRA_SKILL_IDS = tuple(key for key in SKILLS if key.startswith("x"))
 
+# 所有打对手的招都可以改成打自己（雨晨）。这几样对自己用没有意义，不让选。
+NO_SELF_EFFECTS = {"swap_character", "swap_hp", "divination"}
+
 # 本子上圈了“先”字的招：比普通招先出手，比神技慢。
 FIRST_STRIKE_IDS = {"21", "23", "24", "x7", "x9"}  # 雷神之怒、太阳黑子爆、伽马射线、一零二仙折、行星撞地球
 # 本子上圈了“必”字的招：必中（γ 射线本来就不走闪避）。
