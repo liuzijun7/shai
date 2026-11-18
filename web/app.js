@@ -325,33 +325,36 @@ function promptHtml() {
   if (S.need === "pick") {
     return `<div class="panel prompt"><b>${esc(p.reason)}</b>${soFar}<div class="row">${p.options.map((o) => `<button class="primary" data-pick="${esc(o.id)}">${esc(o.name)}</button>`).join("")}</div></div>`;
   }
-  if (p.mode) {                // 正在贼：写清楚这一把在定什么、谁赢了会怎样
-    const stakes = p.stakes || {}, series = p.series;
-    const line = (side, cls) => (stakes[side] ? `<span class="${cls}"><b>${esc(who(side))}赢</b> → ${esc(personal(stakes[side]))}</span>` : "");
-    const tie = p.mode === "single"
-      ? `<span><b>打平</b> → ${esc(personal(stakes.tie || "不算赢"))}（这种贼只出一次）</span>`
-      : `<span class="muted">打平就再出一次，直到分出胜负。</span>`;
-    const count = series ? `<p class="series">要连赢 ${series.need} 把才算数。现在是第 ${series.index} 把。</p>` : "";
-    const hand = (r, side) => `${esc(who(side))} ${HAND_GLYPH[r[side]]} ${esc(r[side])}`;
-    const rounds = (p.rounds || []).map((r, i) => `<li>这一次贼的第 ${i + 1} 把：${hand(r, L)}，${hand(r, R)}${r[L] === r[R] ? "，打平" : ""}</li>`).join("");
-    const played = (p.rounds || []).length;
-    const again = played ? `<p class="again">上一把打平了。现在出第 ${played + 1} 把。</p>` : "";
-    const shown = p.choices ? `<p>${esc(who(L))}出的招是【${esc(p.choices[L].name)}】，${esc(who(R))}出的招是【${esc(p.choices[R].name)}】。</p>` : "";
-    let body;
-    if (S.need === "throw") body = `<div class="row hands">${HAND_NAMES.map((h) => `<button class="primary" data-hand="${h}"><span>${HAND_GLYPH[h]}</span> ${h}</button>`).join("")}</div>`;
-    else if (S.need === "redo") body = `<div class="row"><b>这一把你输了。你有内功“重贼”，还能重来 ${p.redo_left[me.side]} 次。</b><button class="primary" data-redo="1">重贼</button><button data-redo="0">算了</button></div>`;
-    else if (p.redo_side) body = `<p class="muted">${esc(who(p.redo_side))}输了，正在决定要不要用“重贼”再来一次…</p>`;
-    else if (inGame()) body = `<p class="muted">${p.thrown && p.thrown[me.side] ? "你已经出了，等对手出拳…" : "这一次贼不用你出拳，等结果…"}</p>`;
-    else body = `<p class="muted">等双方出拳…</p>`;
-    return `<div class="panel prompt zei ${S.need === "throw" || S.need === "redo" ? "" : "wait"}">
-      <b class="zei-title">贼：${esc(personal(p.reason))}</b>${count}
-      <div class="stakes">${line(L, "win")}${line(R, "lose")}${tie}</div>${shown}${rounds ? `<ul>${rounds}</ul>` : ""}${again}${body}</div>`;
-  }
+  if (p.mode) return `<div class="panel prompt wait"><span class="muted">正在贼：看上面舞台中间的框。</span></div>`;
   if (inGame() && S.need === "wait" && !S.view.chosen[me.side] && sees[me.side]) {
     return `<div class="panel prompt wait"><b>你能透视对手。</b><span class="muted">等对手先选招，你看到他选了什么以后再选。</span></div>`;
   }
   const idle = inGame() ? "你已经选好了，等对手…" : "观战中。双方正在选招…";
   return `<div class="panel prompt wait"><span class="muted">${p.reason ? esc(p.reason) + "…" : idle}</span></div>`;
+}
+
+// 贼的框：放在舞台中间。出拳、打平再来、最后的结果都在这一个框里（结果由 stage.js 的 zeiResult 接着画）。
+function zeiPanelHtml() {
+  const p = (S && S.prompt) || {};
+  if (!p.mode || playing || replay || S.need === "over") return "";
+  const L = leftSide(), R = rightSide(), stakes = p.stakes || {}, series = p.series, rounds = p.rounds || [];
+  const line = (side, cls) => (stakes[side] ? `<span class="${cls}"><b>${esc(who(side))}赢</b> → ${esc(personal(stakes[side]))}</span>` : "");
+  const tie = p.mode === "single"
+    ? `<span><b>打平</b> → ${esc(personal(stakes.tie || "不算赢"))}（这种贼只出一次）</span>`
+    : `<span class="muted">打平就再出一次，直到分出胜负。</span>`;
+  const count = series ? `<div class="series">要连赢 ${series.need} 把才算数。现在是第 ${series.index} 把。</div>` : "";
+  const shown = p.choices ? `<div class="zs">${esc(who(L))}出的招是【${esc(p.choices[L].name)}】，${esc(who(R))}出的招是【${esc(p.choices[R].name)}】。</div>` : "";
+  const rows = rounds.map((r) => `<div class="zr"><span>${HAND_GLYPH[r[L]]}<small>${esc(r[L])}</small></span><i>${r[L] === r[R] ? "打平" : "对"}</i><span>${HAND_GLYPH[r[R]]}<small>${esc(r[R])}</small></span></div>`).join("");
+  const again = rounds.length ? `<div class="again">上一把打平了。现在出第 ${rounds.length + 1} 把。</div>` : "";
+  let body;
+  if (S.need === "throw") body = `${again}<div class="row hands">${HAND_NAMES.map((h) => `<button class="primary" data-hand="${h}"><span>${HAND_GLYPH[h]}</span> ${h}</button>`).join("")}</div>`;
+  else if (S.need === "redo") body = `<div class="row hands"><b>这一把你输了。你有内功“重贼”，还能重来 ${p.redo_left[me.side]} 次。</b><button class="primary" data-redo="1">重贼</button><button data-redo="0">算了</button></div>`;
+  else if (p.redo_side) body = `<div class="zs">${esc(who(p.redo_side))}输了，正在决定要不要用“重贼”再来一次…</div>`;
+  else if (inGame()) body = `${again}<div class="zs">${p.thrown && p.thrown[me.side] ? "你已经出了，等对手出拳…" : "这一次贼不用你出拳，等结果…"}</div>`;
+  else body = `${again}<div class="zs">等双方出拳…</div>`;
+  return `<div class="zt">贼：${esc(personal(p.reason))}</div>${count}
+    <div class="stakes">${line(L, "win")}${line(R, "lose")}${tie}</div>${shown}
+    <div class="zn"><b>${esc(who(L))}</b><b>${esc(who(R))}</b></div>${rows}${body}<span class="clock" id="clock"></span>`;
 }
 
 // 倒计时。服务器每次发局面时告诉网页“每一方还剩几秒”，网页自己往下数。
@@ -425,8 +428,17 @@ function renderControls() {
   if (!$("#battle") || !S || S.phase === "lobby") return;
   $("#top").innerHTML = topHtml();
   $("#prompt").innerHTML = promptHtml();
+  const box = $("#stage .zeibox");
+  if (box && !playing) {                       // 播放的时候这个框归舞台管（它要在里面亮出贼的结果）
+    const html = zeiPanelHtml();
+    if (html) {
+      if (box.hidden) $("#stage").scrollIntoView({ block: "nearest" });
+      box.innerHTML = html; box.hidden = false;
+    } else { box.hidden = true; box.innerHTML = ""; }
+  }
   const panel = $("#prompt .panel");
-  if (panel) { panel.insertAdjacentHTML("beforeend", `<span class="clock" id="clock"></span>`); tickClock(); }
+  if (panel && !$("#clock")) panel.insertAdjacentHTML("beforeend", `<span class="clock" id="clock"></span>`);
+  tickClock();
   const choosing = S.need === "choose" && !playing;
   $("#actionbox").hidden = !choosing;
   if (!choosing) ui.sceneAction = null;
@@ -440,7 +452,12 @@ function renderControls() {
 async function pump() {
   if (playing || !stage) return;
   playing = true; renderControls();
-  const mine = run;
+  const mine = run, box = $("#stage .zeibox");
+  if (box && !box.hidden) {                    // 刚出完拳：接下来要是贼的结果，框留着接着用；不是就收起来
+    const next = events.slice(played).find((e) => e.t !== "log");
+    if (next && next.t === "zei") box.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+    else { box.hidden = true; box.innerHTML = ""; }
+  }
   while (stage && mine === run && played < events.length) {
     const ev = events[played++];
     if (ev.t === "log") appendLog(ev.text);
@@ -499,6 +516,11 @@ function renderBattle() {
       else if (b.id === "skip" && stage) stage.skipping = true;
       else if (b.id === "again") startReplay();
       else if (b.id === "back") leave();
+    };
+    $("#stage").onclick = (ev) => {             // 贼的框在舞台里：出拳、重贼的按钮在这里接
+      const b = ev.target.closest("button"); if (!b || b.disabled) return;
+      if (b.dataset.hand) send({ t: "throw", hand: b.dataset.hand });
+      else if (b.dataset.redo) send({ t: "redo", yes: b.dataset.redo === "1" });
     };
     $("#top").onchange = (ev) => { if (ev.target.id === "auto") send({ t: "auto", on: ev.target.checked }); };
     $("#top").onclick = (ev) => {

@@ -116,9 +116,12 @@ class Actions:
             self._log(f"{L(target)}处于真空，声波炮无效。")
             return self.after_special(actor, spec)
         if spec["target"] == "enemy":
-            if not self.skill_hits(actor, target, spec):
-                return self.after_special(actor, spec)
+            # 先看这个招对他有没有用。没用就不用为“躲不躲得开”贼了。
             if self.blocked_by_immunity(actor, target, spec):
+                return self.after_special(actor, spec)
+            if self.only_filtered_statuses(actor, target, spec):
+                return self.after_special(actor, spec)
+            if not self.skill_hits(actor, target, spec):
                 return self.after_special(actor, spec)
         if effect == "sunspot":
             actor.resources["星体能量"] -= 3

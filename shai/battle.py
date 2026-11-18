@@ -820,6 +820,8 @@ class Battle(Rules, Actions, TurnStart, Forms):
         if not hits_foe or spec["action_kind"] != "skill" or target.defeated:
             return ""
         why = self.immunity_reason(target, spec)
+        if why is None and spec["effect"] is None and int(spec["damage"]) <= 0 and spec["statuses"]                 and "免疫不良" in self.traits(target) and all(name not in SELF_BUFFS for name, _ in spec["statuses"]):
+            why = "免疫不良特效"
         return f"对手{why}，这个招现在打他无效" if why else ""
 
     # ================= 杂项 =================

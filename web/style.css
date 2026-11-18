@@ -169,3 +169,10 @@ input[type="text"], select { background: var(--sheet); border: 1.5px solid var(-
 .zeibox .zw.win { color: var(--ok); } .zeibox .zw.lose { color: var(--red); }
 .again { margin: 0; font-weight: 800; font-size: 1.05rem; color: var(--pen); background: var(--hl); padding: 2px 10px; border-radius: 4px; justify-self: start; }
 .zeibox .zs { color: var(--muted); font-size: .9rem; }
+/* 贼的框：出拳和结果都在舞台中间这一个框里 */
+.zeibox { min-width: min(92%, 380px); }
+.zeibox .stakes { text-align: left; justify-self: center; }
+.zeibox .series { font-weight: 700; color: var(--pen); }
+.zeibox .hands { justify-content: center; }
+.zeibox .again { justify-self: center; }
+.zeibox .clock { justify-self: center; }

@@ -89,6 +89,16 @@ class Rules:
             return "免疫冰系的招"
         return None
 
+    def only_filtered_statuses(self, actor: Fighter, target: Fighter, spec: dict[str, Any]) -> bool:
+        """这个招没有伤害、没有别的效果，只会给对手加不良状态，而对手免疫不良特效：整个招对他没用。"""
+        harmful = [name for name, _ in spec["statuses"] if name not in SELF_BUFFS]
+        plain = spec["effect"] is None and self.character_damage(actor, spec) <= 0
+        if not (plain and harmful and len(harmful) == len(spec["statuses"]) and "免疫不良" in self.traits(target)):
+            return False
+        self._emit("immune", side=target.side, skill=spec["name"])
+        self._log(f"{self.label(target)}免疫不良特效，【{spec['name']}】对他没有用。")
+        return True
+
     def blocked_by_immunity(self, actor: Fighter, target: Fighter, spec: dict[str, Any]) -> bool:
         why = self.immunity_reason(target, spec)
         if why is None:
@@ -127,9 +137,9 @@ class Rules:
                 if repetitions - done > 0 and not target.defeated:
                     self._log(f"【{spec['name']}】剩下的{repetitions - done}下落空：一个招只能打掉一个盾牌或一条命。")
                 break
-            if not prechecked and not self.skill_hits(actor, target, spec):
-                continue
             if not prechecked and self.blocked_by_immunity(actor, target, spec):
+                continue
+            if not prechecked and not self.skill_hits(actor, target, spec):
                 continue
             multiplier = 1.0
             level = actor.inner_level("蛮力")

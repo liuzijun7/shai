@@ -226,6 +226,14 @@ class ClearerInformation(unittest.TestCase):
         lines = [line for line in b.log if "没有加上" in line]
         self.assertEqual(lines, ["B的陶渊明免疫不良特效，封物、封魔、封喉、封品、封土、封化、封生没有加上。"])
 
+    def test_no_zei_for_a_move_that_cannot_do_anything(self):
+        b = fight("武圣", "陶渊明")                        # 陶渊明：虚空神术 3，免疫不良特效
+        self.assertIn("免疫不良特效", legal(b, "A")["12"]["warning"])
+        b.choose("A", "12")                                # 昏睡咒只会加昏睡，对他没用
+        b.choose("B", "d2")
+        self.assertIsNone(b.pending)                       # 不用为“躲不躲得开”贼
+        self.assertIn("B的陶渊明免疫不良特效，【昏睡咒】对他没有用。", b.log)
+
     def test_floating_up_says_why(self):
         b = fight("武圣", "欧阳修")
         self.assertTrue(any("有内功轻于鸿毛3级，自己往上飘一层，移动到对流层" in line for line in b.log))

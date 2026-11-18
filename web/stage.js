@@ -168,19 +168,18 @@ class Stage {
   // 贼出了结果：把双方每一把出的拳、谁赢了、赢了以后怎么样，摆在舞台中间给大家看。
   async zeiResult(ev) {
     Sfx.zei();
-    if (this.fast) return;
     const el = this.root.querySelector(".zeibox"), L = this.me, R = this.foe, rounds = ev.rounds || [];
-    const last = rounds[rounds.length - 1];        // 只亮最后一把；前面打平的几把出拳的时候已经看过了
-    const row = last ? `<div class="zr"><span>${HAND_GLYPH[last[L]] || "？"}<small>${esc(last[L] || "")}</small></span>
-      <i>对</i><span>${HAND_GLYPH[last[R]] || "？"}<small>${esc(last[R] || "")}</small></span></div>` : "";
-    const ties = rounds.length > 1 ? `<div class="zs">前面打平了 ${rounds.length - 1} 把</div>` : "";
+    if (this.fast) { el.hidden = true; return; }
+    const rows = rounds.slice(-4).map((r) => `<div class="zr"><span>${HAND_GLYPH[r[L]] || "？"}<small>${esc(r[L] || "")}</small></span>
+      <i>${r[L] === r[R] ? "打平" : "对"}</i><span>${HAND_GLYPH[r[R]] || "？"}<small>${esc(r[R] || "")}</small></span></div>`).join("");
     const result = ev.winner == null ? "打平" : this.who(ev.winner) + "赢";
     const tone = ev.winner === L ? "win" : ev.winner === R ? "lose" : "";
-    el.innerHTML = `<div class="zt">贼的结果</div><div class="zs">${esc(this.personal(ev.reason))}</div>
-      <div class="zn"><b>${esc(this.who(L))}</b><b>${esc(this.who(R))}</b></div>${row}${ties}
+    const open = !el.hidden;                     // 出拳的时候这个框就开着：结果接着写在同一个框里
+    el.innerHTML = `<div class="zt">贼：${esc(this.personal(ev.reason))}</div>
+      <div class="zn"><b>${esc(this.who(L))}</b><b>${esc(this.who(R))}</b></div>${rows}
       <div class="zw ${tone}">${esc(result)}${ev.outcome ? "：" + esc(this.personal(ev.outcome)) : ""}</div>`;
     el.hidden = false;
-    await this.anim(el, [{ opacity: 0 }, { opacity: 1 }], 160);
+    if (!open) await this.anim(el, [{ opacity: 0 }, { opacity: 1 }], 160);
     await this.wait(1600);
     el.hidden = true;
   }
