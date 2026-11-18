@@ -376,6 +376,7 @@ class Stage {
         if (f) { f.devices = f.devices || {}; f.devices[ev.name] = ev.progress; }
         this.pop(ev.side, ev.name + " " + ev.progress + "/" + ev.of, "note");
         return this.wait(300);
+      case "loan": this.pop(ev.side, "借了" + ev.source + "的" + ev.name + ev.level + "级", "note"); return this.wait(350);
       case "crit": this.pop(ev.side, "暴击", "hurt"); return this.wait(150);
       case "zei": return this.zeiResult(ev);
       case "phase": return this.wait(200);

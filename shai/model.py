@@ -84,8 +84,9 @@ class Fighter:
         return max(int(self.inner.get(name, 0)), self.learned_level(name))
 
     def borrowed_level(self, name: str) -> int:
+        """借来的内功。宋濂一次只借一种，借的是哪一种记在 counters["loan"] 里。"""
         lender = self.lender
-        if lender is None or lender.defeated:
+        if lender is None or lender.defeated or self.counters.get("loan") != name:
             return 0
         return lender.own_level(name)
 
@@ -96,9 +97,9 @@ class Fighter:
     def all_inner(self) -> dict[str, int]:
         """自带的、学来的、借来的内功合在一起，每种取最高的等级。"""
         merged = self.own_inner()
-        if self.lender is not None and not self.lender.defeated:
-            for name, level in self.lender.own_inner().items():
-                merged[name] = max(int(merged.get(name, 0)), int(level))
+        loan = self.counters.get("loan")
+        if loan and self.borrowed_level(loan) > 0:
+            merged[loan] = max(int(merged.get(loan, 0)), self.borrowed_level(loan))
         return merged
 
     def reset_resources(self) -> None:

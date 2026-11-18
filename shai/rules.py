@@ -386,7 +386,8 @@ class Rules:
         self._emit("radiation", side=target.side, amount=int(amount), total=target.radiation, reason=reason)
         self._log(f"{self.label(target)}受到{amount}点辐射，累计{target.radiation}/15。")
         if target.radiation >= 15:
-            self.kill_current_life(target, source, all_lives=True, reason="辐射达到15点")
+            # 雨晨：辐射满 15 次只丢当前这一条命，多出来的辐射不带到下一条命（下一条命从 0 开始）。大难不死救不了。
+            self.kill_current_life(target, source, all_lives=False, reason="辐射达到15点")
 
     def move_vertical(self, fighter: Fighter, steps: int, why: str = "") -> None:
         if fighter.has_status("万能胶"):

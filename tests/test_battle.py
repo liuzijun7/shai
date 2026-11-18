@@ -50,7 +50,7 @@ class BasicRules(unittest.TestCase):
     def test_sealed_attribute_is_illegal_but_normal_attack_remains(self):
         b = Battle(["欧阳修"], ["武圣"], seed=1, true_body=False)
         b.fighter("A").statuses["封物"] = Status("封物", 3, "B", fresh=False)
-        self.assertFalse(legal(b, "A")["3"]["legal"])
+        self.assertFalse(legal(b, "A")["1"]["legal"])            # 流星是物理
         self.assertTrue(legal(b, "A")["0"]["legal"])
 
     def test_iron_shirt_halves_damage(self):
@@ -86,9 +86,11 @@ class BasicRules(unittest.TestCase):
         b.fighter("B").scene = "电离层"                          # 比地面高 3 层
         self.assertFalse(legal(b, "A")["0"]["legal"])
         self.assertIn("够不着", legal(b, "A")["0"]["reason"])
-        self.assertTrue(legal(b, "A")["6"]["legal"])             # 圣六式空凌能往上打 3 层
-        b.fighter("B").scene = "宇宙"
-        self.assertFalse(legal(b, "A")["6"]["legal"])
+        self.assertTrue(legal(b, "A")["6"]["legal"])             # 圣六式空凌能往上打
+        self.assertTrue(legal(b, "A")["21"]["legal"])            # 雷神之怒也能
+        self.assertFalse(legal(b, "A")["10"]["legal"])           # 寒潮不能往上打
+        b.fighter("B").scene = "宇宙边缘"
+        self.assertTrue(legal(b, "A")["6"]["legal"])             # 多高都打得到
         self.assertTrue(legal(b, "A")["32"]["legal"])            # 神技打得到
         # 在上面的人默认打得到下面的人。
         b = Battle(["陶渊明"], ["武圣"], seed=1, true_body=False)
@@ -143,13 +145,13 @@ class OrderAndZei(unittest.TestCase):
     def test_zei_decides_order_and_sealed_move_is_cancelled(self):
         b = Battle(["拳术宗师"], ["饕餮"], seed=1, true_body=False)
         b.choose("A", "4")          # 摄魂大法：封魔
-        b.choose("B", "5")          # 狮子吼：魔法
+        b.choose("B", "3")          # 点穴手：魔法，打中了封物
         self.assertEqual(b.pending["kind"], "zei")
         self.assertEqual(b.pending["purpose"], "order")
         self.assertEqual(sorted(b.pending["askers"]), ["A", "B"])
         b.answer("A")               # A 贼赢，A 先出手
         self.assertTrue(b.fighter("B").has_status("封魔"))
-        self.assertEqual(b.fighter("A").hp, 100000)           # 狮子吼被憋回去，完全作废
+        self.assertFalse(b.fighter("A").has_status("封物"))   # 点穴手被憋回去，完全作废
 
     def test_zei_loser_seal_lands_after_the_attack(self):
         b = Battle(["拳术宗师"], ["饕餮"], seed=1, true_body=False)
@@ -158,7 +160,7 @@ class OrderAndZei(unittest.TestCase):
         self.assertTrue(b.fighter("B").has_status("封魔"))
 
     def test_shen_goes_before_normal_move_without_zei(self):
-        b = Battle(["欧阳修"], ["饕餮"], seed=1, true_body=False)
+        b = Battle(["武圣"], ["饕餮"], seed=1, true_body=False)
         b.choose("A", "32")         # 惊天混元掌：神技
         b.choose("B", "0")
         self.assertIsNone(b.pending)
@@ -226,7 +228,7 @@ class ShenRules(unittest.TestCase):
         self.assertNotIn("32", b.fighter("A").used_shen)
 
     def test_shen_once_per_life(self):
-        b = Battle(["欧阳修"], ["饕餮"], seed=1, true_body=False)
+        b = Battle(["武圣"], ["饕餮"], seed=1, true_body=False)
         play(b, "32", "0")
         self.assertIn("32", b.fighter("A").used_shen)
         self.assertFalse(legal(b, "A")["32"]["legal"])
@@ -293,7 +295,7 @@ class Teams(unittest.TestCase):
         b.choose("A", "4")
         with self.assertRaises(RuleError):
             b.choose("A", "0")
-        b.choose("B", "5")
+        b.choose("B", "3")
         self.assertIsNotNone(b.pending)
         with self.assertRaises(RuleError):
             b.choose("A", "0")

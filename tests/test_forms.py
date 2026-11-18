@@ -33,7 +33,7 @@ class TimedForms(unittest.TestCase):
         self.assertIn("生化大师进化成猪带小天王", "".join(b.log))
 
     def test_turns_off_the_field_do_not_count(self):
-        b = Battle(["生化大师", "武圣"], ["宋濂"], seed=1, true_body=False)
+        b = Battle(["生化大师", "武圣"], ["范仲淹"], seed=1, true_body=False)
         quiet(b.fighter("A"))
         quiet(b.fighter("B"))
         play(b, "d1", "d1")

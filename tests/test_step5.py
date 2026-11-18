@@ -60,7 +60,7 @@ class Watching(unittest.TestCase):
         room, _ = room_with(["拳术宗师"], ["饕餮"])
         key, _ = room.join("丙")
         room.handle("A", {"t": "choose", "action": "4"})          # 摄魂大法
-        room.handle("B", {"t": "choose", "action": "5"})          # 狮子吼
+        room.handle("B", {"t": "choose", "action": "3"})          # 点穴手
         room.handle("A", {"t": "throw", "hand": "石头"})
         state = room.state_for(key)
         self.assertEqual(state["need"], "watch")
@@ -126,7 +126,7 @@ class Timers(unittest.TestCase):
     def test_throwing_too_slowly_lets_the_computer_throw(self):
         room, clock = room_with(["拳术宗师"], ["饕餮"])
         room.handle("A", {"t": "choose", "action": "4"})
-        room.handle("B", {"t": "choose", "action": "5"})
+        room.handle("B", {"t": "choose", "action": "3"})
         self.assertEqual(room.state_for("A")["need"], "throw")
         room.handle("A", {"t": "throw", "hand": "石头"})
         clock.now += ZEI_SECONDS + 21

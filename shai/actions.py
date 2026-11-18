@@ -203,8 +203,10 @@ class Actions:
             return
 
         # ----- 大部分招共用的流程：伤害，状态，附加效果 -----
+        lives = target.lives_remaining
         self.deal_skill_damage(actor, target, spec, base, reps, prechecked=True)
-        if target.defeated:
+        if target.defeated or target.lives_remaining < lives:
+            # 这一招已经打掉了对手一条命：剩下的特效不会落到他的下一条命上（雨晨）。
             return self.after_special(actor, spec)
         self.begin_status_batch()
         for name, turns in spec["statuses"]:

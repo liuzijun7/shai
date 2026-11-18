@@ -78,6 +78,39 @@ class KubaHelper(unittest.TestCase):
         self.assertIsNone(b.pending)
 
 
+class AnswersOf1118(unittest.TestCase):
+    def test_radiation_takes_one_life_and_does_not_carry_over(self):
+        b = fight("巫师", "武圣")                           # 巫师幻影 4：X 光 5 次乘 5，一共 25 次辐射
+        play(b, "20", "d1")
+        foe = b.fighter("B")
+        self.assertEqual((foe.lives_remaining, foe.radiation, foe.hp), (1, 0, 100000))
+
+    def test_a_move_that_took_a_life_does_not_touch_the_next_life(self):
+        b = fight("拳术宗师", "武圣")
+        b.fighter("B").hp = 5000
+        play(b, "5", "d3", zei="B")                         # 吼：伤害加封喉 5 回合。这一下打掉了第一条命
+        foe = b.fighter("B")
+        self.assertEqual(foe.lives_remaining, 1)
+        self.assertFalse(foe.has_status("封喉"))             # 封喉不会落到第二条命上
+
+    def test_attributes_settled_by_the_user(self):
+        from shai.data import SKILLS
+        want = {"3": ("魔法",), "4": ("魔法",), "5": ("物理",), "9": ("物理", "地理"), "10": ("物理", "地理"),
+                "12": ("特技",), "21": ("物理", "魔法", "特技"), "28": ("化学", "特技"), "29": ("化学", "特技")}
+        for key, attributes in want.items():
+            self.assertEqual(tuple(SKILLS[key]["attributes"]), attributes, SKILLS[key]["name"])
+        b = fight("武圣", "宋濂")                           # 宋濂免疫魔法
+        settle(b)
+        self.assertIn("免疫魔法", legal(b, "A")["3"]["warning"])    # 点穴手是魔法
+        self.assertEqual(legal(b, "A")["5"]["warning"], "")        # 吼是物理
+
+    def test_fat_dragon_reaches_everywhere(self):
+        b = fight("肥龙王", "武圣")
+        settle(b)
+        b.fighter("B").scene = "宇宙边缘"
+        self.assertTrue(legal(b, "A")["0"]["legal"])
+
+
 class AimAtYourself(unittest.TestCase):
     def test_any_move_can_be_used_on_yourself(self):
         b = fight("陶渊明", "武圣")
@@ -134,19 +167,39 @@ class BothMovesAlwaysComeOut(unittest.TestCase):
 
 
 class BorrowedInner(unittest.TestCase):
-    def test_song_lian_borrows_only_from_the_fighter_on_the_field(self):
-        b = fight("宋濂", ["巫师", "武圣"])
+    def test_song_lian_picks_one_inner_skill_of_the_fighter_on_the_field(self):
+        b = fight("宋濂", ["陶渊明", "武圣"])                # 陶渊明：凌波微步 3、虚空神术 3
+        self.assertEqual(b.pending["askers"], ["A"])          # 回合开始先问宋濂借哪一种
+        self.assertEqual([o["id"] for o in b.pending["options"]], ["", "凌波微步", "虚空神术"])
+        b.answer("凌波微步")
         song = b.fighter("A")
         self.assertEqual(song.lives_total, 1)
-        self.assertEqual(song.inner_level("幻影"), 4)      # 对面是巫师：有巫师的幻影
-        self.assertEqual(song.inner_level("铁布衫"), 3)    # 自己的铁布衫一直在
+        self.assertEqual(song.inner_level("凌波微步"), 3)
+        self.assertEqual(song.inner_level("虚空神术"), 0)     # 一次只借一种
+        self.assertEqual(song.inner_level("铁布衫"), 3)       # 自己的铁布衫一直在
+        self.assertEqual(b.view()["players"]["A"]["team"][0]["borrowed"], ["凌波微步"])
         play(b, "d1", "switch:1")
         song = b.fighter("A")
-        self.assertEqual(song.inner_level("幻影"), 0)      # 巫师下场了，借来的幻影就没有了
-        self.assertEqual(song.inner_level("铁布衫"), 3)
+        self.assertEqual(song.inner_level("凌波微步"), 0)     # 陶渊明下场了，借来的就没有了
+        self.assertIsNone(b.pending)                          # 武圣没有内功，没东西可借，不问
+
+    def test_a_loan_lasts_five_turns_then_must_change(self):
+        b = fight("宋濂", "陶渊明")
+        b.answer("凌波微步")
+        for _ in range(4):
+            play(b, "d1", "d1")
+            self.assertEqual(b.fighter("A").inner_level("凌波微步"), 3)
+        b.choose("A", "d1")                                   # 第 5 回合打完，第 6 回合开始：借满 5 回合，要换一种
+        b.choose("B", "d1")
+        self.assertEqual([o["id"] for o in b.pending["options"]], ["", "虚空神术"])
+        b.answer("虚空神术")
+        self.assertEqual(b.fighter("A").inner_level("虚空神术"), 3)
+        self.assertEqual(b.fighter("A").inner_level("凌波微步"), 0)
 
     def test_borrowed_inner_goes_when_the_lender_dies(self):
         b = fight("宋濂", ["巫师", "武圣"])
+        b.answer("幻影")
+        self.assertEqual(b.fighter("A").inner_level("幻影"), 4)
         foe = b.fighter("B")
         foe.shield, foe.hp = 0, 1
         play(b, "0", "d2")
@@ -182,9 +235,7 @@ class Rebirth(unittest.TestCase):
 class SeeThrough(unittest.TestCase):
     def test_bronze_monster_picks_after_seeing_the_other_pick(self):
         b = fight("纵目青铜怪", "饕餮")
-        self.assertEqual(sorted(b.waiting_for()), ["A", "B"])     # 上场的第 1 回合不透视
-        play(b, "d1", "d1")
-        self.assertEqual(b.waiting_for(), ["B"])                  # 第 2 回合透视：对手先选
+        self.assertEqual(b.waiting_for(), ["B"])                  # 上场以后第一个能出招的回合就透视：对手先选
         self.assertFalse(legal(b, "A")["0"]["legal"])
         self.assertIsNone(b.view()["peek"]["A"])
         b.choose("B", "5")
@@ -193,10 +244,23 @@ class SeeThrough(unittest.TestCase):
         self.assertIsNone(b.view()["peek"]["B"])
         b.choose("A", "d1")
         settle(b)
-        self.assertEqual(b.round, 3)
-        self.assertEqual(sorted(b.waiting_for()), ["A", "B"])     # 第 3 回合不透视，第 4 回合再透视
+        self.assertEqual(b.round, 2)
+        self.assertEqual(sorted(b.waiting_for()), ["A", "B"])     # 下一回合不透视
         play(b, "d1", "d1")
-        self.assertEqual(b.waiting_for(), ["B"])
+        self.assertEqual(b.waiting_for(), ["B"])                  # 隔一回合又透视
+
+    def test_coming_in_after_a_death_sees_through_at_once(self):
+        b = fight(["武圣", "纵目青铜怪"], "饕餮")
+        first = b.fighter("A")
+        first.lives_remaining, first.hp = 1, 1
+        play(b, "d2", "0")                                        # 武圣倒下，纵目青铜怪顶上来（不算一回合）
+        self.assertEqual(b.fighter("A").name, "纵目青铜怪")
+        self.assertEqual(b.waiting_for(), ["B"])                  # 他出招的第一个回合，对手就被透视
+
+    def test_switching_in_sees_through_on_the_next_turn(self):
+        b = fight(["武圣", "纵目青铜怪"], "饕餮")
+        play(b, "switch:1", "d1")                                 # 换人占这一回合
+        self.assertEqual(b.waiting_for(), ["B"])                  # 下一回合透视
 
     def test_the_status_lets_the_other_side_see(self):
         b = fight("武圣", "饕餮")
@@ -206,7 +270,6 @@ class SeeThrough(unittest.TestCase):
 
     def test_two_seers_cancel_out(self):
         b = fight("纵目青铜怪", "纵目青铜怪")
-        play(b, "d1", "d1")
         self.assertTrue(b.view()["sees"] == {"A": False, "B": False})
         self.assertEqual(sorted(b.waiting_for()), ["A", "B"])
 
@@ -218,9 +281,7 @@ class SeeThrough(unittest.TestCase):
         room.handle("A", {"t": "team", "names": ["纵目青铜怪"]})
         room.handle("B", {"t": "team", "names": ["饕餮"]})
         watcher, _ = room.join("丙")
-        room.handle("A", {"t": "choose", "action": "d1"})       # 第 1 回合不透视
-        room.handle("B", {"t": "choose", "action": "d1"})
-        self.assertEqual(room.state_for("A")["need"], "wait")   # 第 2 回合：等对手先选
+        self.assertEqual(room.state_for("A")["need"], "wait")   # 第 1 回合就透视：等对手先选
         room.handle("B", {"t": "choose", "action": "5"})
         self.assertEqual(room.state_for("A")["view"]["peek"]["name"], "狮子吼")
         self.assertEqual(room.state_for("A")["need"], "choose")
@@ -237,7 +298,7 @@ class ClearerInformation(unittest.TestCase):
         room.handle("A", {"t": "team", "names": ["拳术宗师"]})
         room.handle("B", {"t": "team", "names": ["饕餮"]})
         room.handle("A", {"t": "choose", "action": "4"})    # 摄魂大法
-        room.handle("B", {"t": "choose", "action": "5"})    # 狮子吼
+        room.handle("B", {"t": "choose", "action": "3"})    # 点穴手
         state = room.state_for("A")
         self.assertEqual(state["need"], "throw")
         self.assertEqual(state["prompt"]["stakes"], {"A": "A的拳术宗师先出手", "B": "B的饕餮先出手", "tie": ""})

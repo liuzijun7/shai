@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from .data import SCENES
+from .data import LOAN_TURNS, SCENES
 
 DRAGONS = {"龙王", "肥龙王"}
 DIVINERS = {"占卜大师", "魔法师"}
@@ -43,6 +43,40 @@ class TurnStart:
             if destination:
                 mover = foe.name if destination == forced and forced != own else target.name
                 self.set_scene(target, destination, f"回合开始时{mover}选了场景")
+
+    # ---------- 宋濂借内功 ----------
+    # 雨晨：回合开始时弹出一个选择，列出对面场上人物现有的内功，宋濂选一种来借，不占出招。
+    # 本子：“最多借 5 回合要换一个借（不耗回合）”。借满 5 回合再选一次，要换另一种。
+    # 对面的人物下场或者死了，借来的就没有了（在 Battle._link_lenders 里清掉）。
+
+    def loan_phase(self) -> None:
+        for side in ("A", "B"):
+            borrower = self.fighter(side)
+            lender = borrower.lender
+            if lender is None or lender.defeated or borrower.defeated:
+                continue
+            available = lender.own_inner()
+            loan, turns = borrower.counters.get("loan"), int(borrower.counters.get("loan_turns", 0))
+            if loan and loan in available and turns < LOAN_TURNS:
+                borrower.counters["loan_turns"] = turns + 1        # 接着借
+                continue
+            if loan:                                               # 借满了，或者对面没有这种内功了
+                borrower.counters["loan_last"] = loan
+                borrower.counters.pop("loan", None)
+                borrower.counters.pop("loan_turns", None)
+                self._log(f"{self.label(borrower)}借的{loan}到期了。")
+            last = borrower.counters.pop("loan_last", None)
+            names = [name for name in sorted(available) if name != last]
+            if not names:
+                continue
+            options = [{"id": "", "name": "不借"}] + [{"id": name, "name": f"{name}{available[name]}级"} for name in names]
+            choice = self._decide(
+                "choose", side=side, options=options,
+                reason=f"{self.label(borrower)}借对面{lender.name}的哪一种内功？最多借{LOAN_TURNS}回合，到时候要换一种")["value"]
+            if choice:
+                borrower.counters["loan"], borrower.counters["loan_turns"] = choice, 1
+                self._emit("loan", side=side, name=choice, level=available[choice], source=lender.name)
+                self._log(f"{self.label(borrower)}借了{lender.name}的{choice}{available[choice]}级。")
 
     # ---------- 占卜 ----------
     # 雨晨的回答：每回合出招之前，占卜大师猜对手这回合用什么属性的招，双方都能看到他猜了什么。

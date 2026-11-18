@@ -22,7 +22,7 @@ from math import inf
 from typing import Any
 
 from .actions import Actions
-from .data import ACCELERATOR_BIG, NO_SELF_EFFECTS, accelerator_level
+from .data import ACCELERATOR_BIG, NO_SELF_EFFECTS, UP_REACH_IDS, accelerator_level
 from .data import (
     CHARACTERS, CHARACTER_NAME_TO_ID, FIRST_STRIKE_IDS, LEARN_THRESHOLDS, SCENES, SEAL_BY_ATTRIBUTE,
     SELF_BUFFS, SKILLS,
@@ -125,8 +125,9 @@ class Battle(Rules, Actions, TurnStart, Forms):
     def _sees_through(self, side: str) -> bool:
         """这一方这回合能不能透视对手：对手先选招，他看到以后再选。
 
-        纵目青铜怪自带透视。规则文档：“登场后下一回合透视对手技能，之后每隔一回合透视一次”，
-        也就是他上场以后的第 2、4、6…回合。
+        纵目青铜怪自带透视。规则文档：“登场后下一回合透视对手技能，之后每隔一回合透视一次”。
+        雨晨：人死了以后他顶上来不算一回合，所以他上场以后第一个能出招的回合就透视，之后隔一回合一次。
+        换人上场的那一回合他不出招，下一回合是他第一个能出招的回合，也是透视。
         身上有“透视”状态（灵气寒霜指打出来的）的人物每回合都被对手透视。
         两边互相都能透视就抵消，照常同时选。
         """
@@ -136,7 +137,7 @@ class Battle(Rules, Actions, TurnStart, Forms):
 
         def can(seer: Fighter, seen: Fighter) -> bool:
             turn = int(seer.counters.get("field_turns", 0))
-            return ("透视" in self.traits(seer) and turn >= 2 and turn % 2 == 0) or seen.has_status("透视")
+            return ("透视" in self.traits(seer) and turn % 2 == 1) or seen.has_status("透视")
 
         return can(me, foe) and not can(foe, me)
 
@@ -505,7 +506,12 @@ class Battle(Rules, Actions, TurnStart, Forms):
         """借内功的人物（宋濂）只向对面场上的人物借：那个人物下场或者死了，借来的内功就没有了。"""
         for side in SIDES:
             fighter, foe = self.fighter(side), self.fighter(self.other(side))
-            fighter.lender = foe if "借内功" in self.traits(fighter) else None
+            lender = foe if "借内功" in self.traits(fighter) else None
+            if fighter.lender is not lender:            # 对面换了人：原来借的那一种作废，下回合开始重新选
+                fighter.counters.pop("loan", None)
+                fighter.counters.pop("loan_turns", None)
+                fighter.counters.pop("loan_last", None)
+            fighter.lender = lender
 
     def _start_phase(self) -> None:
         self.choices, self.skipping = {}, set()
@@ -525,6 +531,7 @@ class Battle(Rules, Actions, TurnStart, Forms):
                 self.skipping.discard(side)
                 self.choices.pop(side, None)
         self.scene_phase()                      # 牛顿选场景、龙王移动对手、库巴的扔和跑
+        self.loan_phase()                       # 宋濂选借对面的哪一种内功
         self.divination_phase()                 # 占卜大师猜对手这回合用什么属性的招
         if len(self.choices) == 2:              # 双方都不能出招：直接结算这一回合
             self._resolve_round()
@@ -837,14 +844,12 @@ class Battle(Rules, Actions, TurnStart, Forms):
         any_scene = effect == "accelerator" and actor.devices.get("粒子加速器", 0) >= ACCELERATOR_BIG["builds"]
         # 够不够得着（雨晨）：在上面的人默认打得到下面的人；在下面的人默认打不到上面的人，
         # 除非这个招本身能往上打；神技不受限制；能打全宇宙的人物出什么招都打得到。
-        any_scene = any_scene or "神技" in spec["attributes"]
-        # 引擎原来给饕餮、埃及法老、生化大师、占卜大师各算了 2 到 4 层的“人物距离”，照雨晨说的不算了：
-        # 不能打全宇宙的人物，往上打只看这个招自己能打多高。
-        if spec["target"] == "enemy" and actor.distance != inf and not any_scene:
-            reach = int(spec["distance"])
-            gap = target.scene_height - actor.scene_height
-            if gap > reach:
-                return (f"够不着：对手比你高{gap}层，" + (f"这个招最多往上打{reach}层" if reach else "这个招不能往上打"))
+        any_scene = any_scene or "神技" in spec["attributes"] or spec["id"] in UP_REACH_IDS
+        # 能往上打的招是雨晨点名的那几个（圣六式空凌、一零二仙折、七八五重雷、雷神之怒、云端之星）。
+        # 引擎原来的“人物距离”和“招的距离”这两个数不用了。
+        if spec["target"] == "enemy" and actor.distance != inf and not any_scene \
+                and target.scene_height > actor.scene_height:
+            return "够不着：对手在你上面，这个招不能往上打"
         return None
 
     def _warning(self, target: Fighter, spec: dict[str, Any]) -> str:
