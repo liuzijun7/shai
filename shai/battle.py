@@ -54,6 +54,11 @@ class _ProbeStop(Exception):
     """试算两种先后顺序时，算完这一回合就停。"""
 
 
+# 判断“谁先出手有没有区别”时，最多试算这么多种情况。再多就不算了，保守地当作有区别。
+# 两个超级真身对打时一回合里能有五六次概率，要试几十到一百多种情况。
+PROBE_BUDGET = 400
+
+
 class Battle(Rules, Actions, TurnStart, Forms):
     VERSION = "1.0-dev"
 
@@ -276,7 +281,7 @@ class Battle(Rules, Actions, TurnStart, Forms):
             guard += 1
             prints = []
             self._mute = True
-            same = self._order_irrelevant(request, {}, [48])
+            same = self._order_irrelevant(request, {}, [PROBE_BUDGET])
             self._forced_first, self._mute, self._probe_assign = None, False, None
             self._restore(self._snap)
             if not same:
@@ -307,8 +312,9 @@ class Battle(Rules, Actions, TurnStart, Forms):
             self._forced_first, self._probe_assign = first, assumed
             status, need, fingerprint = self._attempt()
             if status == "need":
-                values = list(need["sides"]) + ([None] if need.get("mode") == "single" else [])
-                return all(self._order_irrelevant(request, {**assumed, need["label"]: v}, budget) for v in values)
+                # 每次贼只有“成”和“不成”两种结果，各试一遍就够了。
+                # （只出一次的那种贼，打平总是和其中一方赢的效果一样，不用单独试。）
+                return all(self._order_irrelevant(request, {**assumed, need["label"]: v}, budget) for v in need["sides"])
             prints.append(fingerprint)
         return prints[0] == prints[1]
 
