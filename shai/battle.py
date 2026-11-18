@@ -853,7 +853,7 @@ class Battle(Rules, Actions, TurnStart, Forms):
             if top is None:
                 return "够不着：对手在你上面，这个招不能往上打"
             if target.scene_height > top:
-                limit = "大气层之内（最高到电离层）" if top <= 3 else "外太空"
+                limit = "大气层之内（最高到电离层）" if top <= 3 else "宇宙"
                 return f"够不着：对手在{target.scene}，这个招往上最高只能打到{limit}"
         return None
 

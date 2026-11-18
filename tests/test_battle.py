@@ -96,9 +96,10 @@ class BasicRules(unittest.TestCase):
         self.assertIn("大气层之内", legal(b, "A")["10"]["reason"])
         self.assertTrue(legal(b, "A")["23"]["legal"])            # 太阳黑子爆能打宇宙
         b.fighter("B").scene = "外太空"
-        self.assertTrue(legal(b, "A")["23"]["legal"])            # 也能打外太空
+        self.assertFalse(legal(b, "A")["23"]["legal"])           # 最高只能打到宇宙，外太空打不到
+        self.assertIn("最高只能打到宇宙", legal(b, "A")["23"]["reason"])
         b.fighter("B").scene = "宇宙边缘"
-        self.assertFalse(legal(b, "A")["23"]["legal"])           # 打不到宇宙边缘
+        self.assertFalse(legal(b, "A")["23"]["legal"])           # 宇宙边缘也打不到
         self.assertTrue(legal(b, "A")["6"]["legal"])             # 圣六式空凌多高都打得到
         self.assertTrue(legal(b, "A")["32"]["legal"])            # 神技打得到
         # 在上面的人默认打得到下面的人。
