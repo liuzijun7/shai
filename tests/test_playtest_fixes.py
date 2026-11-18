@@ -127,7 +127,9 @@ class Rebirth(unittest.TestCase):
 class SeeThrough(unittest.TestCase):
     def test_bronze_monster_picks_after_seeing_the_other_pick(self):
         b = fight("纵目青铜怪", "饕餮")
-        self.assertEqual(b.waiting_for(), ["B"])
+        self.assertEqual(sorted(b.waiting_for()), ["A", "B"])     # 上场的第 1 回合不透视
+        play(b, "d1", "d1")
+        self.assertEqual(b.waiting_for(), ["B"])                  # 第 2 回合透视：对手先选
         self.assertFalse(legal(b, "A")["0"]["legal"])
         self.assertIsNone(b.view()["peek"]["A"])
         b.choose("B", "5")
@@ -136,7 +138,10 @@ class SeeThrough(unittest.TestCase):
         self.assertIsNone(b.view()["peek"]["B"])
         b.choose("A", "d1")
         settle(b)
-        self.assertEqual(b.round, 2)
+        self.assertEqual(b.round, 3)
+        self.assertEqual(sorted(b.waiting_for()), ["A", "B"])     # 第 3 回合不透视，第 4 回合再透视
+        play(b, "d1", "d1")
+        self.assertEqual(b.waiting_for(), ["B"])
 
     def test_the_status_lets_the_other_side_see(self):
         b = fight("武圣", "饕餮")
@@ -146,6 +151,8 @@ class SeeThrough(unittest.TestCase):
 
     def test_two_seers_cancel_out(self):
         b = fight("纵目青铜怪", "纵目青铜怪")
+        play(b, "d1", "d1")
+        self.assertTrue(b.view()["sees"] == {"A": False, "B": False})
         self.assertEqual(sorted(b.waiting_for()), ["A", "B"])
 
     def test_only_the_seer_gets_the_peek_over_the_network(self):
@@ -156,7 +163,9 @@ class SeeThrough(unittest.TestCase):
         room.handle("A", {"t": "team", "names": ["纵目青铜怪"]})
         room.handle("B", {"t": "team", "names": ["饕餮"]})
         watcher, _ = room.join("丙")
-        self.assertEqual(room.state_for("A")["need"], "wait")
+        room.handle("A", {"t": "choose", "action": "d1"})       # 第 1 回合不透视
+        room.handle("B", {"t": "choose", "action": "d1"})
+        self.assertEqual(room.state_for("A")["need"], "wait")   # 第 2 回合：等对手先选
         room.handle("B", {"t": "choose", "action": "5"})
         self.assertEqual(room.state_for("A")["view"]["peek"]["name"], "狮子吼")
         self.assertEqual(room.state_for("A")["need"], "choose")

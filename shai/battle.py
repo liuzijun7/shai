@@ -120,7 +120,9 @@ class Battle(Rules, Actions, TurnStart, Forms):
     def _sees_through(self, side: str) -> bool:
         """这一方这回合能不能透视对手：对手先选招，他看到以后再选。
 
-        纵目青铜怪自带透视；身上有“透视”状态（灵气寒霜指打出来的）的人物被对手透视。
+        纵目青铜怪自带透视。规则文档：“登场后下一回合透视对手技能，之后每隔一回合透视一次”，
+        也就是他上场以后的第 2、4、6…回合。
+        身上有“透视”状态（灵气寒霜指打出来的）的人物每回合都被对手透视。
         两边互相都能透视就抵消，照常同时选。
         """
         me, foe = self.fighter(side), self.fighter(self.other(side))
@@ -128,7 +130,8 @@ class Battle(Rules, Actions, TurnStart, Forms):
             return False
 
         def can(seer: Fighter, seen: Fighter) -> bool:
-            return "透视" in self.traits(seer) or seen.has_status("透视")
+            turn = int(seer.counters.get("field_turns", 0))
+            return ("透视" in self.traits(seer) and turn >= 2 and turn % 2 == 0) or seen.has_status("透视")
 
         return can(me, foe) and not can(foe, me)
 
@@ -626,6 +629,7 @@ class Battle(Rules, Actions, TurnStart, Forms):
         old.parasites.clear()
         old.lender = None
         player.active = index
+        new.counters["field_turns"] = 0        # 重新上场：从头数“上场以后的第几回合”
         new.scene = old.scene                  # 新上场的人物站在上一个人物的场景
         self._link_lenders()
         # 把上场的人物整个放进事件里：他这时候才亮出来，网页手里的局面可能还是他上场之前的

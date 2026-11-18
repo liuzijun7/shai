@@ -401,6 +401,7 @@ class Rules:
     def start_of_turn(self, actor: Fighter, target: Fighter | None) -> bool:
         """处理一个人物的回合开始。返回 True 表示他这回合不能出招。"""
         actor.counters["personal_turns"] = int(actor.counters.get("personal_turns", 0)) + 1
+        actor.counters["field_turns"] = int(actor.counters.get("field_turns", 0)) + 1    # 这次上场以后的第几回合
         if actor.counters.pop("wine_invincible_until_next_turn", False):
             actor.statuses.pop("无敌", None)
             actor.counters["wine_boost_active"] = True
