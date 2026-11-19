@@ -123,6 +123,13 @@ class ExtraMoves(unittest.TestCase):
         self.assertEqual(b.fighter("B").hp, 150000 - 5 * 10000)
         self.assertFalse(b.fighter("A").has_status("心眼"))  # 5 回合用完了
 
+    def test_sunspot_damage_is_forty_thousand(self):
+        self.assertEqual(SKILLS["23"]["damage"], 40000)
+        b = fight(b="范仲淹")
+        b.fighter("A").resources["星体能量"] = 3
+        play(b, "23", "d1")
+        self.assertEqual(b.fighter("B").hp, 100000 - 40000)
+
     def test_melamine_spoils_panacea(self):
         b = fight()
         b.fighter("B").resources["万灵丹"] = 3
