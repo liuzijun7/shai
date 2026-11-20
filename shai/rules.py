@@ -223,7 +223,7 @@ class Rules:
         if target.shield > 0 and not bypass_shield:
             old = target.shield
             target.shield = max(0, target.shield - amount)
-            self._emit("damage", side=target.side, amount=min(old, amount), layer="shield", reason=reason, **self.vitals(target))
+            self._emit("damage", side=target.side, amount=min(old, amount), layer="shield", reason=reason, extra=True, **self.vitals(target))
             self._log(f"{self.label(target)}的盾牌受到{min(old, amount)}点{reason}，剩余{target.shield}。")
             if target.shield == 0:
                 self.remove_shield_effects(target)
@@ -231,7 +231,7 @@ class Rules:
         old = target.hp
         target.hp = max(0, target.hp - amount)
         actual = old - target.hp
-        self._emit("damage", side=target.side, amount=actual, layer="hp", reason=reason, **self.vitals(target))
+        self._emit("damage", side=target.side, amount=actual, layer="hp", reason=reason, extra=True, **self.vitals(target))
         self._log(f"{self.label(target)}因{reason}损失{actual}体力，剩余{target.hp}。")
         self.check_death(target, actor.side if actor else None, reason)
         return actual
@@ -588,7 +588,7 @@ class Rules:
         if status.layer == "shield" and actor.shield > 0:
             old = actor.shield
             actor.shield = max(0, actor.shield - amount)
-            self._emit("damage", side=actor.side, amount=min(old, amount), layer="shield", reason=reason, **self.vitals(actor))
+            self._emit("damage", side=actor.side, amount=min(old, amount), layer="shield", reason=reason, extra=True, **self.vitals(actor))
             self._log(f"{self.label(actor)}的盾牌因{reason}损失{min(old, amount)}，剩余{actor.shield}。")
             if actor.shield == 0:
                 self.remove_shield_effects(actor)

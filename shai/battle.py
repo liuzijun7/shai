@@ -606,7 +606,13 @@ class Battle(Rules, Actions, TurnStart, Forms):
         order = acting
         if len(acting) == 2:
             tiers = [self._tier(self.fighter(side), specs[side]) for side in acting]
-            if tiers[0] == tiers[1]:
+            # 雨晨 2026-11-19：同一档里，一边的招会封住对面这一招的属性（比如摄魂大法封魔法，对面正好出魔法的招），
+            # 不用贼，封的那一边先出手，对面那一招直接憋回去。两边互相都能封住对方的话，还是贼一次。
+            sealer = [side for side in acting if self._would_seal(side, specs, entries)]
+            if tiers[0] == tiers[1] and len(sealer) == 1:
+                order = [sealer[0], self.other(sealer[0])]
+                self._log(f"{self.label(self.fighter(sealer[0]))}的【{specs[sealer[0]]['name']}】会封住对面这一招，同一档不用贼，{sealer[0]}先出手。")
+            elif tiers[0] == tiers[1]:
                 first = self._decide_order(acting[0], acting[1], "两边的招同一档，谁先出手结果不一样", chosen)
                 order = acting if first == acting[0] else acting[::-1]
             else:
@@ -614,7 +620,9 @@ class Battle(Rules, Actions, TurnStart, Forms):
                 self._log(f"{order[0]}先出手。")
 
         # 5. 依次出招
-        for side in order:
+        self._round_info = {"specs": specs, "order": order, "index": -1}
+        for index, side in enumerate(order):
+            self._round_info["index"] = index       # 现在轮到第几个出招（激光要知道对面的招出了没有）
             self.rng = streams[side]
             actor, target, spec = self.fighter(side), self.fighter(self.other(side)), specs[side]
             # 雨晨：一回合里两边选好的招都会打出来。就算先被对面打死了、或者丢了一条命，这一招照样出。
@@ -673,6 +681,8 @@ class Battle(Rules, Actions, TurnStart, Forms):
                 if attacker not in blocked and attacker not in reflected:
                     self._emit("defend_miss", side=side, by=specs[side]["name"])
                     self._log(f"{self.label(self.fighter(side))}的【{specs[side]['name']}】没有防住对应的招。")
+
+        self._round_info = None
 
         # 6. 回合结束
         self._emit("phase", name="end")
@@ -761,7 +771,8 @@ class Battle(Rules, Actions, TurnStart, Forms):
             fighter, other = self.fighter(side), self.other(side)
             who = fighter.counters.pop("controlled_next", None)        # 死亡绦虫上一回合控制住了
             worm = fighter.parasites.get("控制绦虫")
-            if worm is not None and (worm.age + 1) % 5 == 0:           # 控制绦虫：每到第 5 个回合
+            # 控制绦虫（雨晨 2026-11-19 改）：放上去的下一回合就控制一次，以后每 5 回合再控制一次。
+            if worm is not None and worm.age % 5 == 1:
                 who = worm.source
             if who == other and not fighter.defeated and side not in self.skipping:
                 self.control[side] = other
@@ -861,6 +872,28 @@ class Battle(Rules, Actions, TurnStart, Forms):
         elif level >= 1:
             tier = max(tier, TIER_FIRST)
         return tier
+
+    def _would_seal(self, side: str, specs: dict[str, Any], entries: dict[str, Any]) -> bool:
+        """这一方的招打中以后，会不会把对面这回合选的招的属性封住（封住了对面那一招就憋回去）。"""
+        mine, theirs = specs[side], specs[self.other(side)]
+        if mine["target"] != "enemy" or entries[side].get("on_self"):
+            return False
+        if self._unblockable(self.fighter(self.other(side)), theirs):
+            return False                        # 对面出的是憋不回去的大招
+        if mine["effect"] == "laser":           # 激光：出激光的人看到对面的招以后再选封什么，所以对面的招只要有属性就封得到
+            return any(attribute in SEAL_BY_ATTRIBUTE for attribute in theirs["attributes"])
+        given = {name for name, _ in mine["statuses"]}
+        return any(SEAL_BY_ATTRIBUTE.get(attribute) in given for attribute in theirs["attributes"])
+
+    def pending_attributes(self, side: str) -> set[str]:
+        """这一方这回合选好了、还没打出来的招有哪些属性（已经出过了、出的是防御之类、或者是憋不回去的大招，都返回空）。"""
+        info = getattr(self, "_round_info", None)
+        if not info or side not in info["order"][info["index"] + 1:]:
+            return set()
+        spec = info["specs"][side]
+        if self._unblockable(self.fighter(side), spec):
+            return set()
+        return set(spec["attributes"])
 
     @staticmethod
     def _is_sealed(actor: Fighter, spec: dict[str, Any]) -> bool:

@@ -354,9 +354,15 @@ class Actions:
                 "choose", side=chooser.side, options=options,
                 reason=f"{L(actor)}的激光：{L(chooser) + '来' if chooser is not actor else ''}选第{index}个要封的属性（一共选 3 个，每个贼一次，赢了封 3 回合）")["value"])
         self._log(f"{L(actor)}的激光要封：{'、'.join(picked)}。")
+        # 雨晨 2026-11-19：选的属性正好是对面这回合还没打出来的那一招的属性，这一个不用贼，直接封住，对面那一招憋回去。
+        live = self.pending_attributes(target.side) if chooser is actor and actor is not target else set()
         for attribute in picked:
             if target.defeated:
                 break
+            if attribute in live:
+                self._log(f"{attribute}正好是{L(target)}这回合那一招的属性：不用贼，直接封住。")
+                self.apply_status(target, SEAL_BY_ATTRIBUTE[attribute], 3, actor.side)
+                continue
             won = self._zei(chooser.side, target.side, "decisive", f"{L(actor)}的激光封不封得住{attribute}",
                             {chooser.side: f"{attribute}被封 3 回合", target.side: f"{attribute}没封上"}) == chooser.side
             if won:

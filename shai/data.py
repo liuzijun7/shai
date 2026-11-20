@@ -181,7 +181,7 @@ _extra("x25", "血吸虫", ["生物"], 0, [], 1, 0, effect="parasite", parasite=
 _extra("x26", "死亡吸虫", ["物理", "特技", "生物"], 0, [], 4, 0, effect="parasite", parasite="死亡吸虫",
        description="每回合吸 10% 体力给自己；隔一回合让对手昏睡一次。生化大师一系不能用。")
 _extra("x27", "控制绦虫", ["生物", "特技"], 0, [], 3, 0, effect="parasite", parasite="控制绦虫",
-       description="虫子在对手身上时，每到第 5 个回合，对手这回合出什么招由你来选。")
+       description="放上去的下一回合，对手出什么招由你来选。以后每 5 回合再控制一次。")
 _extra("x28", "死亡绦虫", ["特技", "生物"], 0, [], 4, 0, effect="parasite", parasite="死亡绦虫",
        description="每回合三分之一的可能吸走 75% 体力；没吸成的话，三分之一的可能下一回合由你替对手选招。")
 _extra("x29", "寄生种子", ["生物"], 0, [], 2, 0, effect="parasite", parasite="寄生种子",

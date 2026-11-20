@@ -516,3 +516,119 @@ body { font-family: "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei UI", "Micros
 .dsec { background: linear-gradient(90deg, rgba(150, 185, 255, .55), rgba(150, 185, 255, .12)); padding: 3px 12px; letter-spacing: 2px; }
 .zeibox { border: 2px solid #9fd8ff; box-shadow: 0 0 0 2px rgba(6, 14, 40, .8), 0 0 40px rgba(60, 150, 255, .6); padding: 14px 22px; }
 
+/* ---------- 技能特效贴图、入口页面的主视觉 ---------- */
+.fximg { position: absolute; transform: translate(-50%, -50%); pointer-events: none; z-index: 5; filter: drop-shadow(0 0 18px rgba(255, 255, 255, .25)); }
+.fxdim { inset: 0; background: #020514; opacity: 0; z-index: 0; }
+.hero { display: grid; justify-items: center; margin-top: 7vh; }
+.logo { font: 400 132px/1 "STXingkai", "华文行楷", "STKaiti", "KaiTi", "楷体", serif; color: #fff; letter-spacing: 6px;
+  text-shadow: 0 0 22px rgba(150, 190, 255, .9), 0 0 60px rgba(110, 120, 255, .7), 0 6px 0 rgba(10, 16, 50, .8); }
+.hero + .join { margin-top: 2vh; }
+body.has-title:not(.battle) { background: linear-gradient(180deg, rgba(4, 8, 24, .35), rgba(4, 8, 24, .78)), url("assets/ui/title.jpg") center / cover fixed no-repeat #050a1a; }
+body.has-title:not(.battle) .panel { background: rgba(14, 24, 66, .72); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); border-color: rgba(170, 200, 255, .5); }
+.pop.pink { color: #ff8fe0; -webkit-text-stroke: 2px #ffffff; text-shadow: 0 3px 0 #7a1560, 0 0 16px rgba(255, 110, 220, .85); font-size: 46px; }
+/* 头顶的数字：招打出来的伤害是红的，回合末的吸血和烧伤是粉的，回血是绿的。大、粗、白描边 */
+.pop { font: italic 900 52px/1 var(--num); -webkit-text-stroke: 3px #ffffff; paint-order: stroke fill; letter-spacing: 1px; }
+.pop.hurt { color: #ff2f45; font-size: 68px; text-shadow: 0 4px 0 #6d0a1c, 0 0 18px rgba(255, 60, 90, .9); }
+.pop.shield { color: #35b4ff; font-size: 62px; text-shadow: 0 4px 0 #0b3a78, 0 0 18px rgba(70, 170, 255, .9); }
+.pop.pink { color: #ff5fd0; font-size: 62px; text-shadow: 0 4px 0 #6d0f55, 0 0 18px rgba(255, 100, 215, .9); }
+.pop.heal { color: #2fd973; font-size: 62px; -webkit-text-stroke: 3px #ffffff; text-shadow: 0 4px 0 #0c4a27, 0 0 18px rgba(70, 235, 140, .9); }
+.pop.miss { color: #dfe9ff; font-size: 58px; -webkit-text-stroke: 3px #33487f; text-shadow: 0 4px 0 #1a2a55; letter-spacing: 5px; }
+.pop.bad, .pop.note { font: 900 30px/1 "Microsoft YaHei UI", sans-serif; -webkit-text-stroke: 2.5px #1c2450; text-shadow: 0 3px 0 #1c2450; }
+.pop.bad { color: #f3c4ff; }
+.pop.note { color: #ffffff; }
+
+/* ================= 夜色主题：对战页和入口页用同一种样子 ================= */
+/* （这一段是最后调的材质：低调的科技感。边线是半透明的细蓝线，不是白边；底色压暗，不抢背景。） */
+:root { --brush: "STXingkai", "华文行楷", "STKaiti", "KaiTi", "楷体", serif;
+  --line: rgba(126, 176, 255, .5); --line-hi: rgba(170, 208, 255, .78); --dark: rgba(7, 18, 60, .66);
+  --fill: linear-gradient(180deg, rgba(255, 255, 255, .07) 0, rgba(255, 255, 255, 0) 38%), linear-gradient(180deg, #2c58b4 0%, #214692 52%, #183878 100%); }
+
+/* 有背景画的时候：画当主角，不叠圆台、弧线、星星；最下面压暗一些让招式卡看得清 */
+#battle.has-photo::before, #battle.has-photo .floor { display: none; }
+#battle.has-photo .backdrop { filter: brightness(.72) saturate(1.02); inset: 0; }
+#battle.has-photo .backdrop::after { background: linear-gradient(180deg, rgba(6, 8, 28, .3) 0, rgba(6, 8, 28, 0) 24%, rgba(6, 8, 28, 0) 54%, rgba(6, 8, 28, .86) 100%); }
+.floor i { box-shadow: none; opacity: .7; }
+
+/* 头像和血条 */
+.plate .face { width: 88px; height: 88px; border: 1.5px solid var(--line-hi); border-radius: 3px; background: linear-gradient(160deg, #15357c, #0a1a48); box-shadow: 0 0 0 1px rgba(6, 14, 40, .9), 0 0 10px rgba(80, 150, 255, .35); }
+.plate .face:hover { border-color: var(--gold); }
+.who-row .name { font: 700 17px/1.2 "Microsoft YaHei UI", sans-serif; letter-spacing: .5px; }
+.who-row .who { border-radius: 2px; }
+.bar { height: 22px; background: rgba(5, 12, 38, .84); border: 0; box-shadow: inset 0 0 0 1px var(--line); }
+.bar i { background: linear-gradient(180deg, #ffb866 0%, #ff8427 42%, #ee5e10 100%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28); }
+.bar span { font: italic 700 14px/22px var(--num); text-shadow: 0 1px 2px rgba(0, 0, 0, .9); }
+.bar.shield { height: 12px; }
+.bar.shield i { background: linear-gradient(180deg, #9fdcff 0%, #4aaaf2 50%, #2a80d8 100%); }
+.bar.shield span { font-size: 10.5px; line-height: 12px; }
+.vit::after { height: 1px; background: linear-gradient(90deg, var(--line) 0, var(--line) 62%, rgba(126, 176, 255, 0) 100%); }
+.fighter.right .vit::after { background: linear-gradient(270deg, var(--line) 0, var(--line) 62%, rgba(126, 176, 255, 0) 100%); }
+.chip { border-radius: 2px; font-weight: 500; font-size: 12px; line-height: 19px; padding: 0 7px; background: var(--dark); border: 1px solid var(--line); color: #dbe6ff; box-shadow: none; }
+.chip.bad { background: rgba(84, 26, 20, .72); border-color: rgba(255, 150, 120, .55); color: #ffd9cc; }
+.chip.good { background: rgba(14, 70, 48, .72); border-color: rgba(110, 230, 170, .55); color: #d6ffea; }
+.chip.inner { background: rgba(70, 54, 10, .72); border-color: rgba(255, 210, 100, .55); color: #ffeeba; }
+.mini { width: 38px; height: 38px; border-radius: 3px; border: 1px solid var(--line-hi); box-shadow: none; background: linear-gradient(160deg, #15357c, #0a1a48); }
+
+/* 正上方、正中间 */
+.vs { font: italic 700 19px/1.15 "Microsoft YaHei UI", sans-serif; gap: 10px; }
+.vs > div:first-child { color: #ffb98a; } .vs > div:last-child { color: #a9d0ff; }
+.vs i { font-size: 20px; letter-spacing: -5px; }
+.vs i:first-of-type { color: rgba(255, 160, 90, .85); } .vs i:last-of-type { color: rgba(140, 190, 255, .85); }
+.rnd:not(.csub) { background: rgba(5, 12, 38, .7); box-shadow: inset 0 -1px 0 var(--line); clip-path: polygon(0 0, 100% 0, calc(100% - 14px) 100%, 14px 100%); padding: 1px 30px 2px; font-family: inherit; font-size: 14px; }
+.rnd b { font: 700 16px/1.4 "Microsoft YaHei UI", sans-serif; letter-spacing: 1px; }
+.cring { width: 90px; height: 90px; border: 1px solid var(--line-hi); background: radial-gradient(circle, rgba(10, 26, 72, .55), rgba(10, 26, 72, .1)); box-shadow: 0 0 0 6px rgba(126, 176, 255, .08), 0 0 0 7px rgba(126, 176, 255, .35), 0 0 22px rgba(70, 140, 255, .35); font: 700 50px/1 var(--num); }
+.cring::before { display: none; }
+.cring::after { left: -22px; width: 12px; height: 1px; background: var(--line-hi); box-shadow: 124px 0 0 var(--line-hi); }
+.ctext { font: 700 19px/1.3 "Microsoft YaHei UI", sans-serif; letter-spacing: 4px; border-bottom: 1px solid var(--line); }
+.gauge { background: none; font-size: 12px; }
+.layer { color: rgba(170, 196, 240, .7); }
+#side button { width: 44px; height: 44px; background: rgba(190, 212, 255, .16); border: 1px solid rgba(200, 222, 255, .5); box-shadow: none; font-weight: 500; font-size: 12px; }
+#side button:hover { background: rgba(190, 212, 255, .3); border-color: var(--line-hi); }
+#side button[aria-pressed="true"] { border-color: rgba(255, 211, 90, .8); color: var(--gold); }
+#feed { background: rgba(5, 12, 38, .62); border: 1px solid rgba(126, 176, 255, .28); border-radius: 2px; }
+.say { background: rgba(10, 26, 78, .9); border: 1px solid var(--line-hi); border-radius: 2px; padding: 3px 16px; font: 700 16px/1.4 "Microsoft YaHei UI", sans-serif; box-shadow: 0 0 12px rgba(70, 140, 255, .35); }
+.banner { font: 700 20px/1.4 "Microsoft YaHei UI", sans-serif; letter-spacing: 6px; }
+
+/* 招式卡：切角，细蓝线，压暗的蓝底，里面两行更暗的小格 */
+#tray { background: linear-gradient(180deg, rgba(4, 8, 24, 0) 0, rgba(4, 8, 24, .8) 36%); }
+.mv, .tm { background: var(--line); filter: drop-shadow(0 3px 5px rgba(0, 0, 0, .38)); transition: transform .12s, filter .12s; }
+.mv::before, .tm::before { inset: 1px; background: var(--fill); }
+.mv { height: 102px; grid-template-rows: 25px 23px 23px; gap: 4px 9px; padding: 8px 12px 9px 11px; }
+.mv .mvname { font: 700 16px/25px "Microsoft YaHei UI", sans-serif; letter-spacing: 1px; text-shadow: 0 1px 2px rgba(6, 18, 60, .8); }
+.mv:hover:not(.off):not(.idle), .mv.first, .tm:hover:not(.off), .tm.on { background: rgba(255, 214, 110, .9); transform: translateY(-2px); filter: drop-shadow(0 5px 8px rgba(0, 0, 0, .45)); }
+.mv:hover:not(.off):not(.idle)::before, .tm:hover:not(.off)::before { background: linear-gradient(180deg, rgba(255, 255, 255, .1) 0, rgba(255, 255, 255, 0) 38%), linear-gradient(180deg, #3668cc 0%, #2853a8 52%, #1d428c 100%); }
+.mv.first { transform: none; }
+.mv.off, .tm.off { background: rgba(120, 140, 180, .3); filter: none; }
+.mv.off::before, .tm.off::before { background: linear-gradient(180deg, #26355c, #18233f); }
+.mv.idle { opacity: .5; filter: saturate(.75); }
+.badge { width: 46px; height: 46px; border: 1.5px solid color-mix(in srgb, var(--ring, var(--c, #8fd0ff)) 75%, transparent); background: radial-gradient(circle at 50% 30%, #1a3c86, #091a48 74%); color: var(--c, #fff); font: 800 20px/1 "Microsoft YaHei UI", sans-serif; text-shadow: 0 0 8px var(--c, #8fd0ff); box-shadow: 0 0 0 2px rgba(6, 16, 52, .7); }
+.badge.big { border-color: var(--line-hi); }
+.mvrow { height: 23px; padding: 0 9px; border-radius: 3px; background: var(--dark); box-shadow: inset 0 1px 1px rgba(0, 0, 0, .35); font-size: 12.5px; }
+.mvrow > span { color: #b9d2ff; letter-spacing: 2px; }
+.mvrow > b { font-family: var(--num), "Microsoft YaHei UI"; font-weight: 700; font-size: 13.5px; }
+.mvwhy { height: 23px; line-height: 23px; border-radius: 3px; padding: 0 9px; background: rgba(60, 12, 12, .6); color: #ffb3a8; }
+.tm { height: 102px; }
+.tm .face { width: 64px; height: 64px; border: 1px solid var(--line-hi); border-radius: 3px; }
+
+/* 右下四个按钮：压暗的浅蓝玻璃，细边，白字不描粗边；现在所在的那一个是压下去的深色 */
+#modes button, #modes button:hover { height: 72px; background: rgba(176, 204, 255, .5); filter: drop-shadow(0 3px 5px rgba(0, 0, 0, .38));
+  font: italic 800 24px/1 "Microsoft YaHei UI", sans-serif; letter-spacing: 3px; color: #fff; -webkit-text-stroke: 0; text-shadow: 0 1px 0 #24408c, 0 2px 4px rgba(10, 24, 80, .7); }
+#modes button::before { display: block; inset: 1px; background: linear-gradient(180deg, rgba(255, 255, 255, .14) 0, rgba(255, 255, 255, 0) 45%), linear-gradient(180deg, rgba(132, 160, 222, .94) 0%, rgba(98, 126, 196, .94) 52%, rgba(78, 104, 174, .94) 100%); }
+#modes button:hover { transform: translateY(-2px); }
+#modes button:hover::before { background: linear-gradient(180deg, rgba(255, 255, 255, .18) 0, rgba(255, 255, 255, 0) 45%), linear-gradient(180deg, rgba(150, 178, 236, .96) 0%, rgba(114, 142, 210, .96) 52%, rgba(92, 118, 188, .96) 100%); }
+#modes button[aria-pressed="true"] { background: rgba(120, 140, 190, .45); color: #b9c6e6; text-shadow: none; transform: none; }
+#modes button[aria-pressed="true"]::before { background: linear-gradient(180deg, rgba(56, 72, 118, .96), rgba(38, 50, 90, .96)); }
+
+/* 搜索框、防御、分类 */
+#search { height: 44px; background: rgba(6, 16, 52, .82); box-shadow: inset 0 0 0 1px var(--line); border-radius: 0; clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px); font-weight: 500; }
+#search:focus { box-shadow: inset 0 0 0 1px rgba(255, 214, 110, .9); background: rgba(10, 24, 70, .9); }
+.def { height: 54px; border: 1px solid var(--line); border-radius: 2px; background: linear-gradient(180deg, rgba(34, 70, 150, .82), rgba(18, 42, 104, .86)); box-shadow: none; }
+.def:hover:not(.off) { border-color: rgba(255, 214, 110, .9); background: linear-gradient(180deg, rgba(44, 86, 176, .9), rgba(24, 52, 124, .9)); transform: translateY(-2px); }
+.tabs button, .aim button { border-radius: 2px; border: 1px solid var(--line); background: rgba(10, 26, 78, .78); padding: 2px 14px; font-size: 13px; }
+.tabs button[aria-pressed="true"], .aim button[aria-pressed="true"] { background: linear-gradient(180deg, #ffd978, #eeaa30); border-color: rgba(255, 233, 174, .8); color: #1a2242; }
+
+/* 大面板、贼的框、抽屉：蓝色面板，细蓝线，不要白边 */
+.dialog, .zeibox, .textpanel { background: linear-gradient(180deg, rgba(40, 74, 160, .97) 0%, rgba(28, 54, 126, .97) 45%, rgba(18, 38, 96, .97) 100%); border: 1px solid var(--line-hi); border-radius: 0; box-shadow: 0 0 0 1px rgba(6, 14, 40, .7), 0 18px 50px rgba(0, 0, 0, .55); }
+#drawer { background: linear-gradient(180deg, rgba(28, 54, 126, .97), rgba(14, 30, 80, .97)); border-left: 1px solid var(--line-hi); box-shadow: -10px 0 30px rgba(0, 0, 0, .45); }
+.dhead { background: rgba(8, 22, 70, .5); border-bottom: 1px solid var(--line); font: 700 19px/1.4 "Microsoft YaHei UI", sans-serif; letter-spacing: 3px; padding: 9px 14px 9px 24px; }
+.dsec { background: linear-gradient(90deg, rgba(126, 176, 255, .34), rgba(126, 176, 255, .06)); padding: 2px 12px; letter-spacing: 2px; }
+

@@ -53,6 +53,29 @@ def _defense_art() -> list[str]:
     return sorted(name[:-4] for name in os.listdir(folder) if name.endswith(".png"))
 
 
+def _names(folder: str) -> list[str]:
+    """web/assets/<folder>/ 里的图片名字（不带扩展名）。这些素材只在本机，不在仓库里。"""
+    path = os.path.join(WEB_DIR, "assets", folder)
+    if not os.path.isdir(path):
+        return []
+    return sorted(os.path.splitext(name)[0] for name in os.listdir(path)
+                  if name.lower().endswith((".png", ".jpg", ".jpeg", ".webp")))
+
+
+def _stamp() -> int:
+    """网页文件最后一次改动的时间。页面发现自己比这个旧，就自己刷新一次，免得一直用着改到一半的旧页面。"""
+    latest = 0.0
+    for name in os.listdir(WEB_DIR):
+        if name.endswith((".js", ".css", ".html")):
+            latest = max(latest, os.path.getmtime(os.path.join(WEB_DIR, name)))
+    return int(latest)
+
+
+def _assets() -> dict[str, Any]:
+    return {"art": _art_names(), "defense_art": _defense_art(), "backgrounds": _backgrounds(),
+            "effects": _names("effects"), "ui": _names("ui"), "stamp": _stamp()}
+
+
 def _backgrounds() -> list[str]:
     """本机放的对战背景图（web/assets/backgrounds/，不在仓库里）。没有的时候网页用画出来的擂台。"""
     folder = os.path.join(WEB_DIR, "assets", "backgrounds")
@@ -178,7 +201,7 @@ app = FastAPI(title="晒", lifespan=lifespan, docs_url=None, redoc_url=None, ope
 @app.get("/api/info")
 def info() -> dict[str, Any]:
     """看回放的时候没有进房间，网页从这里拿场景表和有图的人物。"""
-    return {"scenes": _scene_list(), "art": _art_names(), "defense_art": _defense_art(), "backgrounds": _backgrounds()}
+    return {"scenes": _scene_list(), **_assets()}
 
 
 @app.get("/api/codex")
@@ -240,8 +263,7 @@ async def websocket_endpoint(socket: WebSocket) -> None:
                     await socket.send_json({
                         "t": "joined", "room": room.code, "token": token,
                         "side": None if is_watcher(key) else key, "role": "watch" if is_watcher(key) else "play",
-                        "characters": character_catalog(), "scenes": _scene_list(), "art": _art_names(),
-                        "defense_art": _defense_art(), "backgrounds": _backgrounds(),
+                        "characters": character_catalog(), "scenes": _scene_list(), **_assets(),
                     })
                     room.drive()
                 elif room is None or key is None:

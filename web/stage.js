@@ -9,6 +9,50 @@ const ATTR_COLOR = {
 const GOOD_STATUS = ["氪", "真空", "狂龙", "道威", "无敌"];
 const BEAM_EFFECTS = ["xray", "gamma", "aurora", "sound_wave", "sunspot"];
 
+// ---------- 技能特效：一小套贴图，所有的招共用；每个招的动画是一小段数据 ----------
+// （做法照成熟的开源网页对战游戏：舞台分层，特效是贴图加“从哪到哪、多大、多快”的数据，不是每个招单写一段程序。）
+
+// 哪个招用哪一种特效。没列出来的按属性挑（见 fxOf）。
+const MOVE_FX = {
+  "x1": "lightning", "x8": "lightning", "21": "lightning",
+  "18": "fire", "t6": "fire", "x15": "fire", "x16": "fire", "11": "fire", "x10": "fire", "t11": "fire", "t2": "fire",
+  "10": "ice", "x6": "ice", "x11": "ice",
+  "x24": "wind", "c_dragon_typhoon": "wind",
+  "8": "water",
+  "9": "earth", "x5": "earth",
+  "28": "poison", "29": "poison", "x13": "poison",
+  "15": "bugs", "16": "bugs", "17": "bugs", "x25": "bugs", "x26": "bugs", "x27": "bugs", "x28": "bugs", "x29": "bugs", "x30": "bugs", "t9": "bugs",
+  "1": "meteor", "x9": "meteor", "23": "meteor", "c_newton_cloud": "meteor", "x23": "meteor",
+  "3": "magic", "4": "magic", "12": "magic", "22": "magic", "x19": "magic",
+};
+function fxOf(ev) {
+  if (MOVE_FX[ev.id]) return MOVE_FX[ev.id];
+  const a = ev.attributes || [];
+  if (a.includes("神技")) return "divine";
+  if (a.includes("生物")) return "bugs";
+  if (a.includes("化学")) return "poison";
+  if (a.includes("魔法")) return "magic";
+  if (a.includes("地理")) return "earth";
+  return a.includes("特技") && !a.includes("物理") ? "magic" : "slash";
+}
+// 每一种特效怎么演。size：贴图边长是人物那一格高度的几倍。kind：
+//   burst 在对手身上炸开；bolt 从天上劈下来；sweep 从出招的人扫到对手；rise 从脚下冒出来；fall 从斜上方砸下来。
+// from/to 是炸开前后的大小，spin 是转多少度，dim 是整个舞台压暗多少，shake 是震不震屏，lunge 是出招的人冲不冲过去。
+const FX_PLAY = {
+  lightning: { kind: "bolt", size: 2.0, ms: 640, dim: 0.5, shake: true },
+  fire: { kind: "burst", size: 1.55, ms: 780, from: 0.35, to: 1.15, dim: 0.2 },
+  ice: { kind: "burst", size: 1.5, ms: 760, from: 0.3, to: 1.1, spin: 18 },
+  wind: { kind: "sweep", size: 1.8, ms: 920 },
+  water: { kind: "sweep", size: 1.9, ms: 920 },
+  earth: { kind: "rise", size: 1.6, ms: 760, shake: true },
+  poison: { kind: "burst", size: 1.35, ms: 720, from: 0.3, to: 1.05 },
+  bugs: { kind: "burst", size: 1.45, ms: 900, from: 1.35, to: 0.72, spin: -40 },
+  slash: { kind: "burst", size: 1.3, ms: 440, from: 0.5, to: 1.2, spin: 12, lunge: true },
+  magic: { kind: "burst", size: 1.45, ms: 840, from: 0.4, to: 1.1, spin: 90 },
+  divine: { kind: "burst", size: 2.5, ms: 940, from: 0.2, to: 1.25, dim: 0.55, shake: true },
+  meteor: { kind: "fall", size: 1.7, ms: 780, shake: true },
+};
+
 // 每个招用哪一种通用动画。以后想给某个招单独做动画，在 SIGNATURE_ANIMS 里按招的 id 加一项。
 const SIGNATURE_ANIMS = {};
 function animOf(ev) {
@@ -90,8 +134,8 @@ class Stage {
     const chips = [];
     for (const [n, s] of Object.entries(f.statuses || {})) chips.push(`<span class="chip ${GOOD_STATUS.includes(n) ? "good" : "bad"}" data-tip="status:${esc(n)}">${esc(n)} ${s.turns} 回合</span>`);
     for (const [n, p] of Object.entries(f.parasites || {})) {
-      // 控制绦虫每到第 5 个回合才控制一次：写出还差几回合，不然看不出它什么时候起作用
-      const left = n === "控制绦虫" && p.age != null ? 4 - (p.age % 5) : null;
+      // 控制绦虫：放上去的下一回合控制一次，以后每 5 回合一次。写出还差几回合，不然看不出它什么时候起作用
+      const left = n === "控制绦虫" && p.age != null ? (((1 - p.age) % 5) + 5) % 5 : null;
       const when = left == null ? "" : left === 0 ? "（这回合控制）" : `（再过 ${left} 回合控制）`;
       chips.push(`<span class="chip bad" data-tip="parasite:${esc(n)}">${esc(n)}×${p.count}${when}</span>`);
     }
@@ -181,15 +225,16 @@ class Stage {
   pop(side, text, cls = "") {
     if (this.fast) return;
     const h = this.head(side), n = this.fx.querySelectorAll(".pop").length;
-    const el = this.spawn("pop " + cls, h.x + ((n % 3) - 1) * 54, Math.max(86, h.y - 30) - (n % 4) * 30, esc(text));
+    const el = this.spawn("pop " + cls, h.x + ((n % 3) - 1) * 70, Math.max(96, h.y - 34) - (n % 4) * 46, esc(text));
+    // 弹出来以后基本停着不动，让人看清数字；停两秒多再慢慢淡出（雨晨：停留要长，不要动得太快）
     const frames = [
-      { transform: "translate(-50%, 8px) scale(.5)", opacity: 0, offset: 0 },
-      { transform: "translate(-50%, 0) scale(1.18)", opacity: 1, offset: 0.1 },
-      { transform: "translate(-50%, 0) scale(1)", opacity: 1, offset: 0.18 },
-      { transform: "translate(-50%, -16px) scale(1)", opacity: 1, offset: 0.78 },
-      { transform: "translate(-50%, -40px) scale(1)", opacity: 0, offset: 1 },
+      { transform: "translate(-50%, 10px) scale(.4)", opacity: 0, offset: 0 },
+      { transform: "translate(-50%, 0) scale(1.25)", opacity: 1, offset: 0.05 },
+      { transform: "translate(-50%, 0) scale(1)", opacity: 1, offset: 0.09 },
+      { transform: "translate(-50%, -8px) scale(1)", opacity: 1, offset: 0.84 },
+      { transform: "translate(-50%, -22px) scale(1)", opacity: 0, offset: 1 },
     ];
-    this.anim(el, frames, 2000, "ease-out").then(() => el.remove());
+    this.anim(el, frames, 3200, "linear").then(() => el.remove());
   }
   async say(side, text, color) {
     if (this.fast) return;
@@ -236,10 +281,73 @@ class Stage {
 
   // ---------- 出招的几种通用动画 ----------
 
+  // 整个舞台压暗一下，让亮的特效更显眼。
+  dim(alpha, ms) {
+    const el = this.spawn("fxdim", 0, 0);
+    this.anim(el, [{ opacity: 0 }, { opacity: alpha, offset: 0.2 }, { opacity: alpha, offset: 0.7 }, { opacity: 0 }], ms + 200, "linear").then(() => el.remove());
+  }
+  // 播一个贴图特效。有贴图才播；没有就返回 false，由原来代码画的特效顶上。
+  async effect(ev) {
+    const name = fxOf(ev), P = FX_PLAY[name];
+    if (this.fast || !P || !FX_ART.has(name) || ev.target === ev.side || ev.blocked) return false;
+    const from = ev.side, to = ev.target, d = this.dir(from), a = this.center(from), t = this.center(to);
+    const actor = this.box(from).querySelector(".sprite");
+    const unit = this.box(to).querySelector(".sprite").getBoundingClientRect().height, size = unit * P.size;
+    const make = () => {
+      const el = document.createElement("img");
+      el.className = "fximg"; el.alt = ""; el.src = `assets/effects/${name}.webp`;
+      el.style.width = el.style.height = size + "px"; el.style.left = t.x + "px"; el.style.top = t.y + "px";
+      this.fx.appendChild(el);
+      return el;
+    };
+    const base = "translate(-50%, -50%)";
+    Sfx.cast();
+    if (P.lunge) {                              // 近身的招：人先冲过去
+      const dx = (t.x - a.x) * 0.7;
+      await this.anim(actor, [{ transform: "translateX(0)" }, { transform: `translateX(${-18 * d}px)` }, { transform: `translateX(${dx}px)` }], 280, "ease-in");
+      this.anim(actor, [{ transform: `translateX(${dx}px)` }, { transform: "translateX(0)" }], 260);
+    } else {
+      await this.anim(actor, [{ transform: "translateX(0)" }, { transform: `translateX(${-10 * d}px)` }, { transform: `translateX(${8 * d}px)` }, { transform: "translateX(0)" }], 220);
+    }
+    if (P.dim) this.dim(P.dim, P.ms);
+    const el = make();
+    let frames;
+    if (P.kind === "bolt") {                    // 从上往下劈：贴图的底对着人物
+      el.style.top = (t.y - size * 0.34) + "px"; el.style.transformOrigin = "50% 0%";
+      frames = [{ transform: `${base} scaleY(0)`, opacity: 1 }, { transform: `${base} scaleY(1)`, opacity: 1, offset: 0.2 },
+        { transform: `${base} scaleY(1)`, opacity: 0.55, offset: 0.34 }, { transform: `${base} scaleY(1)`, opacity: 1, offset: 0.48 },
+        { transform: `${base} scaleY(1)`, opacity: 1, offset: 0.72 }, { transform: `${base} scaleY(1)`, opacity: 0 }];
+    } else if (P.kind === "sweep") {            // 从出招的人那边扫过来
+      const dx = a.x - t.x;
+      frames = [{ transform: `translate(calc(-50% + ${dx}px), -50%) scale(.7)`, opacity: 0 }, { transform: `translate(calc(-50% + ${dx * 0.7}px), -50%) scale(.9)`, opacity: 1, offset: 0.2 },
+        { transform: `${base} scale(1.1)`, opacity: 1, offset: 0.72 }, { transform: `translate(calc(-50% + ${-dx * 0.12}px), -50%) scale(1.2)`, opacity: 0 }];
+    } else if (P.kind === "rise") {             // 从脚下冒出来
+      frames = [{ transform: `translate(-50%, -20%) scale(.6)`, opacity: 0 }, { transform: `translate(-50%, -44%) scale(1)`, opacity: 1, offset: 0.3 },
+        { transform: `${base} scale(1.08)`, opacity: 1, offset: 0.72 }, { transform: `translate(-50%, -54%) scale(1.12)`, opacity: 0 }];
+    } else if (P.kind === "fall") {             // 贴图画的是从左上砸向右下；打左边的人时左右翻一下
+      const flip = d < 0 ? " scaleX(-1)" : "", off = size * 0.75;
+      frames = [{ transform: `translate(calc(-50% - ${off * d}px), calc(-50% - ${off}px)) scale(.6)${flip}`, opacity: 0 },
+        { transform: `translate(calc(-50% - ${off * d * 0.5}px), calc(-50% - ${off * 0.5}px)) scale(.85)${flip}`, opacity: 1, offset: 0.3 },
+        { transform: `${base} scale(1.05)${flip}`, opacity: 1, offset: 0.7 }, { transform: `${base} scale(1.3)${flip}`, opacity: 0 }];
+    } else {                                    // 在对手身上炸开
+      const spin = P.spin || 0;
+      frames = [{ transform: `${base} scale(${P.from}) rotate(0deg)`, opacity: 0 }, { transform: `${base} scale(${(P.from + P.to) / 2}) rotate(${spin * 0.3}deg)`, opacity: 1, offset: 0.22 },
+        { transform: `${base} scale(${P.to}) rotate(${spin}deg)`, opacity: 1, offset: 0.7 }, { transform: `${base} scale(${P.to * 1.08}) rotate(${spin * 1.15}deg)`, opacity: 0 }];
+    }
+    const done = this.anim(el, frames, P.ms, "ease-out").then(() => el.remove());
+    if (P.shake) {
+      this.wait(P.ms * 0.3).then(() => this.anim(this.root, [{ transform: "translate(0,0)" }, { transform: "translate(-8px,4px)" }, { transform: "translate(7px,-4px)" }, { transform: "translate(-5px,3px)" }, { transform: "translate(0,0)" }], 420));
+    }
+    await this.wait(P.ms * 0.62);                // 特效还在收尾的时候，伤害数字就可以出来了
+    done.catch(() => {});
+    return true;
+  }
+
   async moveAnim(ev) {
     const kind = animOf(ev), from = ev.side, to = ev.target, color = ATTR_COLOR[(ev.attributes || [])[0]] || "#444";
     const actor = this.box(from).querySelector(".sprite"), d = this.dir(from);
     if (kind === "none" || this.fast) return;
+    if (kind !== "self" && kind !== "collect" && await this.effect(ev)) return;      // 有贴图特效就用贴图
     Sfx.cast();
     if (kind === "melee") {
       const a = this.center(from), b = this.center(to), dx = (b.x - a.x) * 0.72;
@@ -340,7 +448,8 @@ class Stage {
         return this.wait(80);
       case "damage":
         Sfx.hit();
-        this.pop(ev.side, "-" + ev.amount, ev.layer === "shield" ? "shield" : "hurt");
+        // 招直接打出来的掉血是红的；回合末吸血、烧伤、场景扣血这些是粉的
+        this.pop(ev.side, "-" + ev.amount, ev.extra ? "pink" : ev.layer === "shield" ? "shield" : "hurt");
         this.vitals(ev.side, ev);
         this.flash(ev.side, ev.layer === "shield" ? "#6a9cf0" : "#e5533d");
         await this.shake(ev.side);

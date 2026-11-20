@@ -44,8 +44,8 @@ class RoomTests(unittest.TestCase):
 
     def test_zei_round_trip(self):
         room = two_player_room(["拳术宗师"], ["饕餮"])
-        room.handle("A", {"t": "choose", "action": "4"})    # 摄魂大法
-        room.handle("B", {"t": "choose", "action": "3"})    # 点穴手（魔法）
+        room.handle("A", {"t": "choose", "action": "22"})   # 摄魂点穴手
+        room.handle("B", {"t": "choose", "action": "3"})    # 点穴手（魔法）：两边互相都能封住对方，要贼先后手
         a, b = room.state_for("A"), room.state_for("B")
         self.assertEqual((a["need"], b["need"]), ("throw", "throw"))
         self.assertEqual(a["prompt"]["choices"]["B"]["name"], "点穴手")   # 贼之前双方的招已经亮出来

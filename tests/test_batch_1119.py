@@ -195,6 +195,33 @@ class NewMoves(unittest.TestCase):
         self.assertIn("B的巫师已经倒下，浴火重生救不回来。", b.log)
         self.assertEqual(b.fighter("B").name, "武圣")
 
+    def test_laser_seals_the_move_the_opponent_is_about_to_use_without_zei(self):
+        # 雨晨 2026-11-19：激光选的属性正好是对面这回合那一招的属性，不用贼，直接封住，对面的招憋回去。
+        b = fight(a="武圣", b="饕餮")
+        b.choose("A", "x17")
+        b.choose("B", "4")                                                # 摄魂大法是魔法的招（封的也是魔法，封不到激光）
+        for attribute in ("魔法", "生物", "化学"):                         # 激光同一档自动先出手，先选三个属性
+            self.assertEqual(b.pending["kind"], "choose")
+            b.answer(attribute)
+        for winner in ("A", "B"):                                         # 只为另外两个属性贼
+            self.assertEqual(b.pending["kind"], "zei")
+            b.answer(winner)
+        self.assertIsNone(b.pending)
+        foe = b.fighter("B")
+        self.assertTrue(foe.has_status("封魔"))
+        self.assertTrue(foe.has_status("封生"))
+        self.assertFalse(foe.has_status("封化"))
+        self.assertIn("B的饕餮的【摄魂大法】被先手封住，憋回去了，这回合没有出招。", b.log)
+
+    def test_losses_at_the_end_of_the_turn_are_marked_for_pink_numbers(self):
+        b = fight(a="武圣", b="饕餮")
+        play(b, "17", "d1")                                               # 蚂蟥：回合末吸血
+        drains = [e for e in b.events if e["t"] == "damage" and e.get("reason") == "蚂蟥"]
+        self.assertTrue(drains and all(e.get("extra") for e in drains))
+        play(b, "0", "d1")
+        hits = [e for e in b.events if e["t"] == "damage" and e.get("reason") == "普通攻击"]
+        self.assertTrue(hits and not any(e.get("extra") for e in hits))
+
     def test_moving_light_wave_exists_but_is_not_offered(self):
         self.assertEqual(SKILLS["x18"]["name"], "动感光波")
         self.assertNotIn("x18", ids(fight(), "A"))
@@ -427,18 +454,29 @@ class Parasites(unittest.TestCase):
         play(b, "d1", "d1")
         self.assertEqual(b.fighter("B").name, "饕餮")                       # 满 5 条命也进化不了
 
-    def test_control_worm_lets_the_owner_pick_every_fifth_turn(self):
+    def test_control_worm_controls_at_once_and_then_every_fifth_turn(self):
+        # 雨晨 2026-11-19：放上去的下一回合就控制，以后每 5 回合再控制一次。
         b = fight()
         play(b, "x27", "d1")
-        for _ in range(2):
-            play(b, "d1", "d1")
-            self.assertEqual(b.chooser("B"), "B")
-        play(b, "d1", "d1")
-        self.assertEqual(b.round, 5)
-        self.assertEqual(b.chooser("B"), "A")                              # 第 5 个回合：B 的招由 A 来选
+        self.assertEqual(b.round, 2)
+        self.assertEqual(b.chooser("B"), "A")                              # 下一回合：B 的招由 A 来选
         self.assertEqual(b.view()["control"], {"B": "A"})
+        for _ in range(4):
+            play(b, "d1", "d1")
+            self.assertEqual(b.chooser("B"), "B")                          # 第 3 到 6 回合 B 自己选
         play(b, "d1", "d1")
-        self.assertEqual(b.chooser("B"), "B")
+        self.assertEqual(b.round, 7)
+        self.assertEqual(b.chooser("B"), "A")                              # 再过 5 回合又控制一次
+
+    def test_a_sealing_move_stifles_a_same_tier_move_without_zei(self):
+        # 雨晨 2026-11-19：摄魂大法封魔法，对面同一档正好出魔法的招：不用贼，直接憋回去。
+        b = fight(a="武圣", b="饕餮")
+        b.choose("A", "4")                                                # 摄魂大法
+        b.choose("B", "3")                                                # 点穴手是魔法的招
+        self.assertIsNone(b.pending)
+        self.assertIn("B的饕餮的【点穴手】被先手封住，憋回去了，这回合没有出招。", b.log)
+        self.assertFalse(b.fighter("A").has_status("封物"))                # 点穴手没打出来
+        self.assertTrue(b.fighter("B").has_status("封魔"))
 
     def test_death_tapeworm_drains_or_takes_control(self):
         b = fight()

@@ -307,8 +307,8 @@ class ClearerInformation(unittest.TestCase):
         room.handle("A", {"t": "config", "team_size": 1})
         room.handle("A", {"t": "team", "names": ["拳术宗师"]})
         room.handle("B", {"t": "team", "names": ["饕餮"]})
-        room.handle("A", {"t": "choose", "action": "4"})    # 摄魂大法
-        room.handle("B", {"t": "choose", "action": "3"})    # 点穴手
+        room.handle("A", {"t": "choose", "action": "22"})   # 摄魂点穴手
+        room.handle("B", {"t": "choose", "action": "3"})    # 点穴手：两边互相都能封住对方，要贼先后手
         state = room.state_for("A")
         self.assertEqual(state["need"], "throw")
         self.assertEqual(state["prompt"]["stakes"], {"A": "A的拳术宗师先出手", "B": "B的饕餮先出手", "tie": ""})

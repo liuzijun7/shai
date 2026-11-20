@@ -24,6 +24,18 @@ let catalog = [];         // 可以选的人物
 let scenes = [];          // [{name, height}]
 let ART = new Set();      // 有图的人物名字；没有图的用圆圈加名字顶替
 let DEF_ART = new Set();  // 有的防御手绘图标；没有的只显示文字
+let FX_ART = new Set();   // 有的技能特效贴图（web/assets/effects/）；没有的用代码画的简单特效顶替
+let PAGE_STAMP = null;    // 这个页面加载时，服务器上网页文件的版本
+// 本机素材的清单。进房间、看回放、刚打开页面时各拿一次。
+function useAssets(m) {
+  ART = new Set(m.art || []); DEF_ART = new Set(m.defense_art || []); FX_ART = new Set(m.effects || []);
+  BACKDROPS = m.backgrounds || [];
+  const title = (m.ui || []).includes("title");
+  document.body.classList.toggle("has-title", title);
+  // 服务器上的网页文件比这个页面新（我改了代码）：自己刷新一次
+  if (PAGE_STAMP == null) PAGE_STAMP = m.stamp || 0;
+  else if (m.stamp && m.stamp !== PAGE_STAMP) location.reload();
+}
 // 用哪一种防御能防住：招上写的“防”对应的图标和名字。j 是平面镜，s 是憋神技。
 const DEF_ICON = { 1: "d1", 2: "d2", 3: "d3", 4: "d4", j: "dhands", s: "dinf" };
 const DEF_NAME = { 1: "防御1", 2: "防御2", 3: "防御3", 4: "防御4", j: "平面镜", s: "憋神技" };
@@ -192,8 +204,7 @@ function connect(room, name, watch) {
     if (m.t === "error") return toast(m.message);
     if (m.t === "joined") {
       me = { room: m.room, side: m.side, role: m.role, token: m.token, name };
-      catalog = m.characters; scenes = m.scenes; ART = new Set(m.art || []); DEF_ART = new Set(m.defense_art || []);
-      BACKDROPS = m.backgrounds || [];
+      catalog = m.characters; scenes = m.scenes; useAssets(m);
       events = []; resetPlayback();
       seatStore.set("shai-token-" + m.room, m.token);
       ui.wanted.room = m.room; location.hash = m.room;
@@ -222,14 +233,15 @@ function connect(room, name, watch) {
 
 function renderJoin() {
   $("#app").innerHTML = `
+    <div class="hero"><div class="logo">晒</div></div>
     <div class="panel join">
-      <h1>晒</h1>
       <label>昵称 <input type="text" id="name" maxlength="12" value="${esc(store.get("shai-name") || "")}"></label>
       <label>房间号 <input type="text" id="room" maxlength="8" placeholder="留空就新开一个房间" value="${esc(location.hash.slice(1))}"></label>
       <label class="check"><input type="checkbox" id="watch"> 只观战，不上场</label>
       <button class="primary" id="go">进入房间</button>
       <button id="opencodex">图鉴：看全部招式、人物、内功</button>
       <p class="muted">把房间号告诉朋友，他输入同一个房间号就能进来。房间里已经有两个人的话，后来的人自动观战。</p>
+      ${seatStore.get("shai-last-room") ? `<p class="muted">你刚才退出的房间是 <b>${esc(seatStore.get("shai-last-room"))}</b>，那一局还留着：输入这个房间号可以回去接着打。</p>` : ""}
     </div>
     <div class="panel join replays"><h2>以前的对局</h2><div id="replaylist" class="muted">正在读取…</div></div>`;
   $("#go").onclick = () => {
@@ -308,8 +320,7 @@ async function openReplay(id) {
   try {
     const get = async (url) => { const r = await fetch(url); if (!r.ok) throw new Error(url); return r.json(); };
     const [record, info] = await Promise.all([get("api/replays/" + encodeURIComponent(id)), get("api/info")]);
-    replay = record; scenes = info.scenes; ART = new Set(info.art || []); DEF_ART = new Set(info.defense_art || []);
-    BACKDROPS = info.backgrounds || [];
+    replay = record; scenes = info.scenes; useAssets(info);
     me = { room: record.room, side: null, role: "replay", name: "" };
     startReplay();
   } catch (e) { toast("这个回放打不开。"); }
@@ -811,8 +822,12 @@ async function pump() {
   renderControls();
 }
 
-// 回到进房间的页面。上场的人留着房间号：座位还给他留着，再进同一个房间可以接着打。
-function leave() { if (!inGame()) location.hash = ""; location.reload(); }
+// 退出：回到干净的入口页，可以新开房间。上场的人的座位还留着：入口页会写出刚才的房间号，输入它可以回去接着打。
+function leave() {
+  if (inGame() && S && S.need !== "over") seatStore.set("shai-last-room", me.room);
+  location.hash = "";
+  location.reload();
+}
 
 function chooseAction(id) {
   const action = (S.actions || []).find((a) => a.id === id);
@@ -1022,4 +1037,5 @@ function render() {
 }
 
 loadCodex();
+fetch("api/info").then((r) => r.json()).then(useAssets).catch(() => {});
 renderJoin();

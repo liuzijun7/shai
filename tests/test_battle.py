@@ -163,8 +163,8 @@ class OrderAndZei(unittest.TestCase):
 
     def test_zei_decides_order_and_sealed_move_is_cancelled(self):
         b = Battle(["拳术宗师"], ["饕餮"], seed=1, true_body=False)
-        b.choose("A", "4")          # 摄魂大法：封魔
-        b.choose("B", "3")          # 点穴手：魔法，打中了封物
+        b.choose("A", "22")         # 摄魂点穴手：封物、封魔，自己带物理
+        b.choose("B", "3")          # 点穴手：魔法，打中了封物。两边互相都能封住对方，所以要贼
         self.assertEqual(b.pending["kind"], "zei")
         self.assertEqual(b.pending["purpose"], "order")
         self.assertEqual(sorted(b.pending["askers"]), ["A", "B"])
@@ -311,7 +311,7 @@ class Teams(unittest.TestCase):
 
     def test_cannot_choose_twice_or_while_waiting(self):
         b = Battle(["拳术宗师"], ["饕餮"], seed=1, true_body=False)
-        b.choose("A", "4")
+        b.choose("A", "22")
         with self.assertRaises(RuleError):
             b.choose("A", "0")
         b.choose("B", "3")
