@@ -71,9 +71,9 @@ const seatName = (side) => (S && S.seats && S.seats[side] ? S.seats[side].name :
 // 怎么称呼一方：上场的人看到“你”和“对手”，旁观的人看到名字。
 const who = (side) => (inGame() ? (side === me.side ? "你" : "对手") : seatName(side));
 // 把“A的武圣”这种写法换成“你的武圣”“对手的武圣”。
+// 也管“A先出手”“A出剪刀，B出石头，B赢”这几种写法。
 const personal = (text) => (inGame()
-  ? String(text || "").split(me.side + "的").join("你的").split(rightSide() + "的").join("对手的")
-    .split(me.side + "先出手").join("你先出手").split(rightSide() + "先出手").join("对手先出手")
+  ? String(text || "").replace(/([AB])(?=的|先出手|出(?:石头|剪刀|布)|赢)/g, (_, side) => (side === me.side ? "你" : "对手"))
   : String(text || ""));
 
 // ---------- 说明文字：悬浮描述框、人物详情、图鉴用的是同一份（服务器的 /api/codex） ----------
