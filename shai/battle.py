@@ -676,7 +676,10 @@ class Battle(Rules, Actions, TurnStart, Forms):
 
         # 6. 回合结束
         self._emit("phase", name="end")
-        for side in order + [s for s in SIDES if s not in order]:
+        # 回合结束的结算固定先 A 后 B，不跟着出手顺序走。
+        # 以前跟着出手顺序走：两边互相吸血、回血又有上限的时候，两种顺序会差一点点，
+        # 结果明明招本身谁先谁后都一样（比如“学内功”对“放虫子”），也要为先后手贼一次。
+        for side in SIDES:
             self.rng = streams[side]
             self.end_of_turn(self.fighter(side))
         self.rng = self._main_rng
@@ -824,7 +827,6 @@ class Battle(Rules, Actions, TurnStart, Forms):
                 if not body:
                     continue                    # 没有人了，由 _check_end 判负
                 index = body[0]
-                self._log(f"{side}的人物全部倒下，超级真身上场。")
             self._switch(side, index, voluntary=False)
 
     def _check_end(self) -> bool:

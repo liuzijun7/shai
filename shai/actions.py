@@ -81,6 +81,9 @@ class Actions:
             self._log(f"{L(actor)}清除了不良状态和寄生虫。")
             return
         if effect == "rebirth":
+            if actor.defeated:                          # 先被打死了：选好的浴火重生照样出，但是救不回来（等雨晨确认）
+                self._log(f"{L(actor)}已经倒下，浴火重生救不回来。")
+                return
             self.cleanse(actor)
             actor.hp = int(actor.max_hp)
             # 本子：“清除自身所有坏东西并防一招”。无敌只管用的这一回合，回合结束就没有了。

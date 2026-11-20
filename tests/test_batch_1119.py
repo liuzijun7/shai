@@ -156,6 +156,45 @@ class NewMoves(unittest.TestCase):
         b.choose("B", "0")
         self.assertEqual(b.fighter("A").hp, 100000 - 20000)
 
+    def test_luck_also_lifts_a_forced_sleep(self):
+        # 雨晨 2026-11-19：幸运也可以解除昏睡。灵力圣使倒下时的“全场强制昏睡”加的时候拦不住，但幸运能解。
+        b = fight(a="武圣", b="饕餮")
+        foe = b.fighter("B")
+        foe.inner["幸运"] = 3
+        b.apply_status(foe, "昏睡", 3, "A", forced=True)
+        play(b, "d1", "d1", zei="B")                                      # 回合开始：幸运贼赢了
+        self.assertFalse(b.fighter("B").has_status("昏睡"))
+
+    def test_nothing_more_is_charged_to_a_life_that_ended_during_the_end_of_turn(self):
+        # 试玩战报：人物在回合末被虫子吸死以后，还在给他扣氧气、加辐射、数状态的回合。
+        b = fight(a="武圣", b="饕餮")
+        foe = b.fighter("B")
+        foe.scene, foe.hp, foe.inner = "宇宙边缘", 1000, {}                # 去掉大难不死，免得还要贼
+        play(b, "17", "d1")                                               # 蚂蟥：回合末吸死
+        self.assertTrue(b.players["B"].team[0].defeated)                  # 结算会重建人物对象，所以重新取一次
+        tail = b.log[b.log.index("B的饕餮因蚂蟥失去全部生命。") + 1:]
+        self.assertFalse([line for line in tail if "氧气" in line or "辐射" in line], tail)
+
+    def test_end_of_turn_bookkeeping_does_not_force_an_order_zei(self):
+        # 试玩战报第 14 回合：一边学内功，一边放华支睾吸虫，谁先谁后招本身没有区别，不该为先后手贼。
+        b = fight(a="武圣", b="灵力圣使")
+        play(b, "x30", "d1")                                              # 先给对面放一条华支睾吸虫，让回合末两边互相吸
+        b.choose("A", "learn:大难不死")
+        b.choose("B", "x30")
+        self.assertIsNone(b.pending)
+        self.assertIn("双方同一档出手，先后不影响结果。", b.log)
+
+    def test_rebirth_cannot_bring_back_a_fighter_that_already_fell(self):
+        b = fight(a="陶渊明", b=["巫师", "武圣"])                          # 陶渊明有凌波微步 3，和神技一档
+        foe = b.fighter("B")
+        foe.shield, foe.max_shield, foe.hp, foe.inner = 0, 0, 5000, {}
+        b.choose("A", "32")                                               # 惊天混元掌
+        b.choose("B", "36")                                               # 浴火重生
+        if b.pending:
+            b.answer("A")                                                 # 同一档：贼出来陶渊明先出手
+        self.assertIn("B的巫师已经倒下，浴火重生救不回来。", b.log)
+        self.assertEqual(b.fighter("B").name, "武圣")
+
     def test_moving_light_wave_exists_but_is_not_offered(self):
         self.assertEqual(SKILLS["x18"]["name"], "动感光波")
         self.assertNotIn("x18", ids(fight(), "A"))

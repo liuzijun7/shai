@@ -288,7 +288,8 @@ class Rules:
             self._log(f"{self.label(target)}的{name}保持{existing.turns}回合。")
             return False
         # 真火写的是“烧几回合”，就烧几次：加上的这一回合也算一回合。别的状态照引擎的老规矩，加上的这一回合不算。
-        target.statuses[name] = Status(name, turns, source, layer, unremovable or forced,
+        # forced 只管“加的时候拦不住”。加上以后能不能解，看 unremovable（雨晨：幸运也可以解除昏睡）。
+        target.statuses[name] = Status(name, turns, source, layer, unremovable,
                                        fresh=name != "真火" and not counts_now)
         self._emit("status", side=target.side, name=name, turns=turns, good=not harmful)
         self._log(f"{self.label(target)}获得{name}（{turns}回合）。")
@@ -336,6 +337,7 @@ class Rules:
             if name in SELF_BUFFS or name == "无敌" or status.unremovable:
                 continue
             fighter.statuses.pop(name, None)
+            self._emit("status_end", side=fighter.side, name=name)      # 告诉网页把这个状态的标签去掉
         for name in list(fighter.parasites):
             self.remove_parasite(fighter, name, "清除")
         if include_radiation:
@@ -411,7 +413,7 @@ class Rules:
 
     def add_radiation(self, target: Fighter, amount: int, source: str | None, reason: str) -> None:
         if "免疫辐射" in self.traits(target):
-            self._log(f"{self.label(target)}免疫{reason}。")
+            self._log(f"{self.label(target)}免疫辐射，{reason}的辐射对他无效。")
             return
         target.radiation += int(amount)
         self._emit("radiation", side=target.side, amount=int(amount), total=target.radiation, reason=reason)
@@ -515,6 +517,12 @@ class Rules:
         if actor.defeated:
             return
         scene = SCENES[actor.scene]
+        lives = actor.lives_remaining
+
+        def gone() -> bool:
+            """这一条命已经没了：倒下了，或者换了下一条命（下一条命从头开始，不接着算上一条命的账）。"""
+            return actor.defeated or actor.lives_remaining < lives
+
         if scene.get("heal"):
             self.heal(actor, int(actor.max_hp * scene["heal"]), actor.scene)
         level = actor.inner_level("生机勃勃")
@@ -522,6 +530,8 @@ class Rules:
             self.heal(actor, int(actor.max_hp * INNER_VALUES["生机勃勃"][level]), "生机勃勃")
 
         for name, status in list(actor.statuses.items()):
+            if gone():
+                return
             if name == "烧伤":
                 self._burn(actor, status, int(actor.max_hp * 0.10), "烧伤")
             elif name == "点燃":
@@ -532,18 +542,28 @@ class Rules:
             elif name == "真火":
                 self._burn(actor, status, int(actor.max_hp / 8), "真火")
         self._parasites(actor)
+        if gone():
+            return
 
         if scene.get("hp_loss"):
             self.apply_nonbasic_damage(None, actor, int(actor.max_hp * scene["hp_loss"]), actor.scene, bypass_shield=True)
+        if gone():
+            return
         if scene.get("vacuum"):
             if actor.resources["氧气"] > 0:
                 actor.resources["氧气"] -= 1
                 self._log(f"{self.label(actor)}消耗1氧气，剩余{actor.resources['氧气']}。")
             else:
                 self.apply_nonbasic_damage(None, actor, int(actor.max_hp * 0.10), "缺氧", bypass_shield=True)
+        if gone():
+            return
         if scene.get("random_radiation"):
             self.add_radiation(actor, self.rng.choice((1, 2, 5)), None, "宇宙边缘射线")
+        if gone():
+            return
         self._water(actor)
+        if gone():
+            return
 
         if "真身" in self.traits(actor) and 0 < actor.hp < 20000:
             actor.hp = int(actor.max_hp)
@@ -577,6 +597,8 @@ class Rules:
 
     def _parasites(self, actor: Fighter) -> None:
         for parasite in list(actor.parasites.values()):
+            if actor.defeated or parasite.name not in actor.parasites:
+                break                               # 宿主这条命没了：剩下的虫子不接着吸下一条命
             parasite.age += 1
             amount = 0
             source = self.fighter(parasite.source)
