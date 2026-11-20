@@ -186,3 +186,5 @@ input[type="text"], select { background: var(--sheet); border: 1.5px solid var(-
 .textpanel textarea { width: 100%; height: min(60vh, 520px); font: .9rem/1.6 ui-monospace, Consolas, "Microsoft YaHei", monospace;
   border: 1px solid var(--rule); border-radius: 6px; padding: 8px 10px; background: var(--paper); color: var(--ink); resize: vertical; }
 .logbox > .row { justify-content: space-between; }
+/* 防御的手绘图标（从本子上抠的） */
+.deficon { height: 24px; vertical-align: middle; margin-left: 6px; }

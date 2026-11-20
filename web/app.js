@@ -23,6 +23,16 @@ let replayDone = false;   // 回放有没有放完
 let catalog = [];         // 可以选的人物
 let scenes = [];          // [{name, height}]
 let ART = new Set();      // 有图的人物名字；没有图的用圆圈加名字顶替
+let DEF_ART = new Set();  // 有的防御手绘图标；没有的只显示文字
+// 用哪一种防御能防住：招上写的“防”对应的图标和名字。j 是平面镜，s 是憋神技。
+const DEF_ICON = { 1: "d1", 2: "d2", 3: "d3", 4: "d4", j: "dhands", s: "dinf" };
+const DEF_NAME = { 1: "防御1", 2: "防御2", 3: "防御3", 4: "防御4", j: "平面镜", s: "憋神技" };
+const DEF_OF_ACTION = { d1: 1, d2: 2, d3: 3, d4: 4, dj: "j", ds: "s" };      // 防御按钮自己是哪一种
+function defIcon(code, hint) {
+  const file = DEF_ICON[code];
+  if (!file || !DEF_ART.has(file)) return "";
+  return `<img class="deficon" src="assets/defense/${file}.png" alt="${esc(DEF_NAME[code])}" title="${esc(hint)}">`;
+}
 let events = [];          // 从开局到现在的全部事件
 let stage = null;         // 对战舞台（stage.js）
 let played = 0;           // 已经播过动画的事件条数
@@ -77,7 +87,8 @@ function connect(room, name, watch) {
     if (m.t === "error") return toast(m.message);
     if (m.t === "joined") {
       me = { room: m.room, side: m.side, role: m.role, token: m.token, name };
-      catalog = m.characters; scenes = m.scenes; ART = new Set(m.art || []); events = []; resetPlayback();
+      catalog = m.characters; scenes = m.scenes; ART = new Set(m.art || []); DEF_ART = new Set(m.defense_art || []);
+      events = []; resetPlayback();
       seatStore.set("shai-token-" + m.room, m.token);
       ui.wanted.room = m.room; location.hash = m.room;
       if (m.role === "watch" && !ui.wanted.watch) toast("房间里已经有两位玩家，你现在是观战。");
@@ -189,7 +200,7 @@ async function openReplay(id) {
   try {
     const get = async (url) => { const r = await fetch(url); if (!r.ok) throw new Error(url); return r.json(); };
     const [record, info] = await Promise.all([get("api/replays/" + encodeURIComponent(id)), get("api/info")]);
-    replay = record; scenes = info.scenes; ART = new Set(info.art || []);
+    replay = record; scenes = info.scenes; ART = new Set(info.art || []); DEF_ART = new Set(info.defense_art || []);
     me = { room: record.room, side: null, role: "replay", name: "" };
     startReplay();
   } catch (e) { toast("这个回放打不开。"); }
@@ -317,6 +328,7 @@ function benchHtml(side) {
   const inner = Object.entries(active.inner || {}).filter(([, v]) => v > 0)
     .map(([k, v]) => `<span class="chip">${esc(k)}${v}${lent.has(k) ? "（借对手的）" : learned.has(k) ? "（学的）" : ""}</span>`).join("");
   const traits = traitText(active.traits);
+  const tree = p.tree ? `<span class="chip">通天神树 ${p.tree}/10</span>` : "";
   const items = Object.entries(active.resources || {}).filter(([, v]) => v > 0).map(([k, v]) => `<span class="chip">${esc(k)} ${v}</span>`).join("");
   const devices = Object.entries(active.devices || {}).filter(([, v]) => v > 0).map(([k, v]) => `<span class="chip">${esc(k)} 造了 ${v} 下</span>`).join("");
   const label = inGame() ? `${who(side)}（${esc(seatName(side))}）` : `${side}：${esc(seatName(side))}`;
@@ -324,7 +336,7 @@ function benchHtml(side) {
   return `<div class="row"><b>${label}</b>${chosen ? `<span class="chip on">已选招</span>` : ""}</div>
     <div class="chips"><span class="muted">场下：</span>${chips || `<span class="muted">没有</span>`}</div>
     <div class="chips"><span class="muted">内功：</span>${inner || `<span class="muted">没有</span>`}</div>
-    <div class="chips"><span class="muted">物品：</span>${items}${devices}</div>
+    <div class="chips"><span class="muted">物品：</span>${items}${devices}${tree}</div>
     ${traits ? `<div class="traits"><span class="muted">特点：</span>${esc(traits)}</div>` : ""}`;
 }
 
@@ -357,6 +369,10 @@ function promptHtml() {
     const peek = S.view.peek;
     const note = peek ? `<span class="peek">透视：对手这回合选了【${esc(peek.name)}】${peek.on_self ? "（打他自己）" : ""}${peek.destination ? "（去" + esc(peek.destination) + "）" : ""}。</span>`
       : (inGame() && sees[R] ? `<span class="muted">对手能透视你：你选完以后他才选，他看得到你选了什么。</span>` : "");
+    if (inGame() && S.choose_for && S.choose_for !== me.side) {
+      return `<div class="panel prompt"><b>对手这回合被你的虫子控制：现在替对手选他的招。</b>
+        <span class="muted">下面列的是对手的招。可以让他打你，也可以让他打他自己。</span></div>`;
+    }
     return `<div class="panel prompt"><b>请选这回合的招。</b>${note}</div>`;
   }
   if (S.need === "pick") {
@@ -365,6 +381,9 @@ function promptHtml() {
   if (p.mode) return `<div class="panel prompt wait"><span class="muted">正在贼：看上面舞台中间的框。</span></div>`;
   if (inGame() && S.need === "wait" && !S.view.chosen[me.side] && sees[me.side]) {
     return `<div class="panel prompt wait"><b>你能透视对手。</b><span class="muted">等对手先选招，你看到他选了什么以后再选。</span></div>`;
+  }
+  if (inGame() && S.need === "wait" && S.view.control && S.view.control[me.side]) {
+    return `<div class="panel prompt wait"><b>这回合你被虫子控制。</b><span class="muted">你的招由对手来选，等他选完。</span></div>`;
   }
   const idle = inGame() ? "你已经选好了，等对手…" : "观战中。双方正在选招…";
   return `<div class="panel prompt wait"><span class="muted">${p.reason ? esc(p.reason) + "…" : idle}</span></div>`;
@@ -439,7 +458,7 @@ function actionsHtml() {
     const color = ATTR_COLOR[a.attributes[0]] || "transparent";
     const ok = self ? a.self_ok : a.legal, why = self ? a.self_reason : a.reason;
     return `<button class="action" style="border-left-color:${color}" data-action="${esc(a.id)}" ${ok ? "" : "disabled"} title="${esc(ok ? a.description || "" : why)}">
-      <b>${esc(a.name)}</b><small>${esc(info)}</small>${extra ? `<small>${esc(extra)}</small>` : ""}${ok ? "" : `<small>${esc(why)}</small>`}${!self && ok && a.warning ? `<small class="warn">${esc(a.warning)}</small>` : ""}</button>`;
+      <b>${esc(a.name)}${a.defense ? defIcon(a.defense, "用" + DEF_NAME[a.defense] + "能防住") : ""}${DEF_OF_ACTION[a.id] ? defIcon(DEF_OF_ACTION[a.id], DEF_NAME[DEF_OF_ACTION[a.id]] + "的手势") : ""}</b><small>${esc(info)}</small>${extra ? `<small>${esc(extra)}</small>` : ""}${ok ? "" : `<small>${esc(why)}</small>`}${!self && ok && a.warning ? `<small class="warn">${esc(a.warning)}</small>` : ""}</button>`;
   }).join("") || `<span class="muted">${self ? "这一类里没有能对自己用的招。" : "没有符合的招。"}</span>`;
 }
 
@@ -483,7 +502,8 @@ function renderControls() {
   $("#actionbox").hidden = !choosing;
   if (!choosing) ui.sceneAction = null;
   $("#tabs").innerHTML = TABS.map((t) => `<button data-tab="${t}" aria-pressed="${t === ui.tab}">${t}</button>`).join("");
-  $("#aim").innerHTML = `<span>这一招打：</span><button data-aim="foe" aria-pressed="${ui.aim === "foe"}">对手</button><button data-aim="self" aria-pressed="${ui.aim === "self"}">自己</button>
+  const proxy = inGame() && S.choose_for && S.choose_for !== me.side;       // 正在替被控制的对手选招
+  $("#aim").innerHTML = `<span>这一招打：</span><button data-aim="foe" aria-pressed="${ui.aim === "foe"}">${proxy ? "你" : "对手"}</button><button data-aim="self" aria-pressed="${ui.aim === "self"}">${proxy ? "他自己" : "自己"}</button>
     ${ui.aim === "self" ? `<span class="warn">打自己：不用躲，够不着也能用，伤害和特效都落在自己身上。</span>` : ""}`;
   $("#scenepick").innerHTML = ui.sceneAction ? `<div class="row"><b>去哪个场景？</b>${scenes.map((s) => `<button data-scene="${esc(s.name)}">${esc(s.name)}</button>`).join("")}<button>取消</button></div>` : "";
   $("#actions").innerHTML = actionsHtml();
@@ -544,7 +564,7 @@ function renderBattle() {
       const b = ev.target.closest(".action"); if (!b || b.disabled) return;
       const action = S.actions.find((a) => a.id === b.dataset.action);
       if (action.effect === "choose_scene") { ui.sceneAction = action.id; renderControls(); }
-      else { send({ t: "choose", action: action.id, on_self: ui.aim === "self" }); ui.aim = "foe"; }
+      else { send({ t: "choose", action: action.id, on_self: ui.aim === "self", for: S.choose_for }); ui.aim = "foe"; }
     };
     $("#aim").onclick = (ev) => { const b = ev.target.closest("button"); if (b) { ui.aim = b.dataset.aim; renderControls(); } };
     $("#scenepick").onclick = (ev) => {
