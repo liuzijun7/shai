@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from shai.data import SCENES
+from shai.describe import codex
 
 from .rooms import Room, RoomError, character_catalog, is_watcher
 
@@ -170,6 +171,12 @@ app = FastAPI(title="晒", lifespan=lifespan, docs_url=None, redoc_url=None, ope
 def info() -> dict[str, Any]:
     """看回放的时候没有进房间，网页从这里拿场景表和有图的人物。"""
     return {"scenes": _scene_list(), "art": _art_names(), "defense_art": _defense_art()}
+
+
+@app.get("/api/codex")
+def get_codex() -> dict[str, Any]:
+    """图鉴：每个招、每个人物、每种内功和状态的说明文字。悬浮描述框也用这一份。"""
+    return codex()
 
 
 @app.get("/api/replays")

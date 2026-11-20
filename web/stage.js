@@ -56,10 +56,12 @@ class Stage {
     const heights = {};
     for (const s of sceneList) (heights[s.height] = heights[s.height] || []).push(s.name);
     this.layers = Object.keys(heights).map(Number).sort((a, b) => b - a).map((h) => ({ h, names: heights[h] }));
-    root.innerHTML = `
-      <div class="fighter" data-side="${this.me}"><div class="hud"></div><div class="sprite"></div><div class="place"></div></div>
-      <div class="gauge"></div>
-      <div class="fighter" data-side="${this.foe}"><div class="hud"></div><div class="sprite"></div><div class="place"></div></div>
+    // 每一方：左上角或右上角一块牌子（头像、名字、血条、状态），下面是人物。
+    // .extra 那一格归 app.js 填（内功、场下的人物、物品）。
+    const fighter = (side, where) => `<div class="fighter ${where}" data-side="${side}">
+        <div class="corner"><div class="hud"></div><div class="extra" data-extra="${side}"></div></div>
+        <div class="sprite"></div></div>`;
+    root.innerHTML = `${fighter(this.me, "left")}<div class="gauge"></div>${fighter(this.foe, "right")}
       <div class="fx"></div><div class="banner" hidden></div><div class="zeibox" hidden></div>`;
     this.fx = root.querySelector(".fx");
   }
@@ -86,16 +88,24 @@ class Stage {
     if (!f) { el.innerHTML = ""; return; }
     const pct = (a, b) => Math.max(0, Math.min(100, (100 * a) / Math.max(1, b)));
     const chips = [];
-    for (const [n, s] of Object.entries(f.statuses || {})) chips.push(`<span class="chip ${GOOD_STATUS.includes(n) ? "good" : "bad"}">${esc(n)} ${s.turns}</span>`);
-    for (const [n, p] of Object.entries(f.parasites || {})) chips.push(`<span class="chip bad">${esc(n)}×${p.count}</span>`);
-    if (f.radiation) chips.push(`<span class="chip bad">辐射 ${f.radiation}/15</span>`);
-    const lives = f.lives_total > 1 ? `<span class="lives">${"●".repeat(Math.max(0, f.lives_remaining))}${"○".repeat(Math.max(0, f.lives_total - f.lives_remaining))}</span>` : "";
+    for (const [n, s] of Object.entries(f.statuses || {})) chips.push(`<span class="chip ${GOOD_STATUS.includes(n) ? "good" : "bad"}" data-tip="status:${esc(n)}">${esc(n)} ${s.turns} 回合</span>`);
+    for (const [n, p] of Object.entries(f.parasites || {})) chips.push(`<span class="chip bad" data-tip="parasite:${esc(n)}">${esc(n)}×${p.count}</span>`);
+    if (f.radiation) chips.push(`<span class="chip bad" data-tip="text:辐射满 15 次丢一条命，大难不死救不回来。">辐射 ${f.radiation}/15</span>`);
+    const lives = f.lives_total > 1 ? `<span class="lives" title="还有 ${Math.max(0, f.lives_remaining)} 条命，一共 ${f.lives_total} 条">${"●".repeat(Math.max(0, f.lives_remaining))}${"○".repeat(Math.max(0, f.lives_total - f.lives_remaining))}</span>` : "";
+    const shown = f.name || "？";
+    const face = ART.has(f.name) ? `<img alt="" src="assets/characters/${encodeURIComponent(f.name)}.png">` : `<i>${esc(shown.slice(0, 1))}</i>`;
+    // 头像：鼠标放上去出这个人物的魂印
     el.innerHTML = `
-      <div class="row"><b class="name">${esc(f.name)}</b>${lives}<span class="who">${esc(this.labels ? this.labels[side] : (side === this.me ? "你" : "对手"))}</span></div>
-      <div class="bar"><i style="width:${pct(f.hp, f.max_hp)}%"></i><span>${f.hp} / ${f.max_hp}</span></div>
-      ${f.max_shield ? `<div class="bar shield"><i style="width:${pct(f.shield, f.max_shield)}%"></i><span>盾 ${f.shield}</span></div>` : ""}
+      <div class="plate">
+        <button class="face" data-tip="soul:${esc(f.name)}" data-detail="${side}" aria-label="${esc(shown)}的魂印">${face}</button>
+        <div class="vit">
+          <div class="who-row"><b class="name">${esc(shown)}</b>${lives}<span class="who">${esc(this.labels ? this.labels[side] : (side === this.me ? "你" : "对手"))}</span></div>
+          ${f.max_shield ? `<div class="bar shield"><i style="width:${pct(f.shield, f.max_shield)}%"></i><span>盾 ${f.shield} / ${f.max_shield}</span></div>` : ""}
+          <div class="bar"><i style="width:${pct(f.hp, f.max_hp)}%"></i><span>${f.hp} / ${f.max_hp}</span></div>
+          <div class="where"><span data-tip="scene:${esc(f.scene)}">${esc(f.scene)} · 高度 ${f.height}</span></div>
+        </div>
+      </div>
       <div class="chips">${chips.join("")}</div>`;
-    this.box(side).querySelector(".place").textContent = `${f.scene}（高度 ${f.height}）`;
   }
 
   sprite(side) {
@@ -105,8 +115,13 @@ class Stage {
     if (this.spriteName[side] === f.name) return;
     this.spriteName[side] = f.name;
     const shown = f.name || "？";
-    const standIn = `<div class="stand-in"><span>${esc(shown.slice(0, 1))}</span><small>${esc(shown)}</small></div>`;
-    el.innerHTML = ART.has(f.name) ? `<img alt="${esc(f.name)}" src="assets/characters/${encodeURIComponent(f.name)}.png">` : standIn;
+    // 鼠标放到人物身上出魂印，点一下看详情
+    const hover = `data-tip="soul:${esc(f.name)}" data-detail="${side}"`;
+    const standIn = `<div class="stand-in" ${hover}><span>${esc(shown.slice(0, 1))}</span><small>${esc(shown)}</small></div>`;
+    // 原画是白底黑线的线稿。放在深色舞台上：线反成亮色，人物的轮廓里垫一层深蓝（用原画自己当蒙版）。
+    const src = `assets/characters/${encodeURIComponent(f.name)}.png`;
+    el.innerHTML = ART.has(f.name)
+      ? `<div class="cutout" ${hover} style="--art:url('${src}')"><img alt="${esc(f.name)}" src="${src}"></div>` : standIn;
   }
 
   gauge() {
@@ -115,7 +130,12 @@ class Stage {
       const mark = (side) => (m[side] && m[side].height === l.h && !m[side].defeated ? `<i class="mark ${side === this.me ? "mine" : "theirs"}"></i>` : `<i class="mark"></i>`);
       const here = (name) => ["A", "B"].some((s) => m[s] && m[s].scene === name);
       const wet = l.h >= 0 && l.h <= water;
-      return `<div class="layer ${wet ? "wet" : ""}">${mark(this.me)}<span>${l.names.map((n) => (here(n) ? `<b>${esc(n)}</b>` : esc(n))).join(" · ")}</span>${mark(this.foe)}</div>`;
+      // 地面这一层有好几个场景：只写有人在的那几个，没人在就写“地面这一层”
+      const busy = l.names.filter(here);
+      const label = l.names.length > 2
+        ? (busy.length ? busy.map((n) => `<b>${esc(n)}</b>`).join(" · ") : "地面这一层")
+        : l.names.map((n) => (here(n) ? `<b>${esc(n)}</b>` : esc(n))).join(" · ");
+      return `<div class="layer ${wet ? "wet" : ""}">${mark(this.me)}<span>${label}</span>${mark(this.foe)}</div>`;
     }).join("");
   }
 

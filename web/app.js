@@ -39,10 +39,10 @@ let played = 0;           // 已经播过动画的事件条数
 let playing = false;
 let run = 0;              // 第几轮播放。换了一局以后，上一轮还没播完的动画不再往下播
 function resetPlayback() { stage = null; played = 0; playing = false; run++; }
-const ui = { picked: [], tab: "全部", search: "", sceneAction: null, wanted: null, aim: "foe" };   // aim：这一招打对手还是打自己
+// aim：这一招打对手还是打自己。mode：操作区现在显示什么（战斗、物品、换人）。
+const ui = { picked: [], tab: "全部", mode: "moves", search: "", sceneAction: null, wanted: null, aim: "foe" };
 const HAND_NAMES = ["石头", "剪刀", "布"];
 const HAND_GLYPH = { "石头": "✊", "剪刀": "✌", "布": "✋" };
-const TABS = ["全部", "技能", "神技", "防御", "物品", "专属", "内功", "换人"];
 
 // 人物特点在引擎里的名字比较短，这里换成看得懂的话。没列出来的照原样显示。
 const TRAIT_TEXT = {
@@ -73,7 +73,112 @@ const who = (side) => (inGame() ? (side === me.side ? "你" : "对手") : seatNa
 // 把“A的武圣”这种写法换成“你的武圣”“对手的武圣”。
 const personal = (text) => (inGame()
   ? String(text || "").split(me.side + "的").join("你的").split(rightSide() + "的").join("对手的")
+    .split(me.side + "先出手").join("你先出手").split(rightSide() + "先出手").join("对手先出手")
   : String(text || ""));
+
+// ---------- 说明文字：悬浮描述框、人物详情、图鉴用的是同一份（服务器的 /api/codex） ----------
+
+let CODEX = null;
+const codexIndex = { skill: {}, char: {}, inner: {}, status: {}, parasite: {}, scene: {} };
+async function loadCodex() {
+  try {
+    const c = await (await fetch("api/codex")).json();
+    for (const x of c.skills) codexIndex.skill[x.id] = x;
+    for (const x of c.characters) codexIndex.char[x.name] = x;
+    for (const x of c.inner) codexIndex.inner[x.name] = x;
+    for (const x of c.statuses) codexIndex.status[x.name] = x;
+    for (const x of c.parasites) codexIndex.parasite[x.name] = x;
+    for (const x of c.scenes) codexIndex.scene[x.name] = x;
+    CODEX = c;
+  } catch (e) { /* 读不到说明文字：悬浮框不出，别的照常 */ }
+}
+const tipLines = (lines) => (lines || []).map(([style, text]) => `<span class="t-${style}">${esc(text)}</span>`).join("");
+const tipHead = (name, tag) => `<span class="t-head"><b>${esc(name)}</b>${tag ? "（" + esc(tag) + "）" : ""}</span>`;
+const innerLine = (name, level) => {
+  const c = codexIndex.inner[name];
+  return c && c.lines[level - 1] ? c.lines[level - 1][1].replace(/^\d 级：/, "") : "";
+};
+
+// 鼠标停在一样东西上要显示什么。key 的写法：“act:招的编号”“soul:人物名”“inner:内功名:级别”“status:状态名”等等。
+function tipHtml(key) {
+  const cut = key.indexOf(":"), kind = cut < 0 ? key : key.slice(0, cut), id = cut < 0 ? "" : key.slice(cut + 1);
+  if (kind === "text") return `<span class="t-text">${esc(id)}</span>`;
+  if (kind === "act") {                          // 选招时的一张卡：说明文字，加上现在能不能用
+    const live = !!S && S.need === "choose" && !playing;
+    const a = ((S && (live ? S.actions : ui.lastActions)) || []).find((x) => x.id === id);
+    if (!a) return "";
+    const self = ui.aim === "self", ok = self ? a.self_ok : a.legal, why = self ? a.self_reason : a.reason;
+    let html;
+    if (a.action_kind === "learn") {
+      const c = codexIndex.inner[a.inner];
+      html = tipHead(a.name, "内功") + `<span class="t-stat">现在 ${a.level} 级，学了 ${a.progress} 下${a.next ? "，到 " + a.next + " 下升级" : ""}。</span>
+        <span class="t-text">学一次内功占这个回合的出招。</span>` + tipLines(c && c.lines.filter(([style]) => style === "text"));
+    } else if (a.action_kind === "switch") {
+      const c = codexIndex.char[a.name.replace(/^换上/, "")];
+      html = tipHead(a.name, "换人") + `<span class="t-text">换人占这个回合的出招，比所有的招都先生效。</span>` + tipLines(c && c.lines);
+    } else {
+      const c = codexIndex.skill[a.id];
+      html = c ? tipHead(c.name, c.tag) + tipLines(c.lines)
+        : tipHead(a.name, (a.attributes || []).join("+")) + (a.description ? `<span class="t-text">${esc(a.description)}</span>` : "");
+      if (/^已经造了/.test(a.description || "")) html += `<span class="t-stat">${esc(a.description.split("。")[0])}。</span>`;
+    }
+    if (live && !ok && why) html += `<span class="t-bad">现在不能用：${esc(personal(why))}。</span>`;
+    else if (live && !self && a.warning) html += `<span class="t-warn">${esc(a.warning)}。</span>`;
+    return html;
+  }
+  if (kind === "skill") { const c = codexIndex.skill[id]; return c ? tipHead(c.name, c.tag) + tipLines(c.lines) : ""; }
+  if (kind === "soul") { const c = codexIndex.char[id]; return c ? tipHead(c.name, "魂印") + tipLines(c.lines) : ""; }
+  if (kind === "inner") {
+    const [name, level] = id.split(":"), c = codexIndex.inner[name];
+    return c ? tipHead(name + " " + level + " 级", "内功") + tipLines(c.lines.map(([, text], i) => [i === level - 1 ? "stat" : "text", text])) : "";
+  }
+  if (kind === "inners") {                       // 内功太多的人物：一个标签列出全部
+    const p = S && S.view && S.view.players[id], f = p && p.team[p.active];
+    if (!f) return "";
+    return tipHead(f.name + "的内功", "") + Object.entries(f.inner || {}).filter(([, v]) => v > 0)
+      .map(([k, v]) => `<span class="t-text">${esc(k)} ${v} 级：${esc(innerLine(k, v))}</span>`).join("");
+  }
+  if (kind === "status") { const c = codexIndex.status[id]; return c ? tipHead(id, c.good ? "好状态" : "不良状态") + `<span class="t-text">${esc(c.text)}</span>` : ""; }
+  if (kind === "parasite") { const c = codexIndex.parasite[id]; return c ? tipHead(id, "虫子") + `<span class="t-text">${esc(c.text)}</span>` : ""; }
+  if (kind === "scene") { const c = codexIndex.scene[id]; return c ? tipHead(id, "场景") + tipLines(c.lines) : ""; }
+  return "";
+}
+
+// 描述框：略透明的黑底白字，贴着鼠标停的那样东西的上边；上边放不下就放下边。
+const tipEl = document.createElement("div");
+tipEl.id = "tip"; tipEl.hidden = true;
+let tipFor = null;
+function showTip(target) {
+  let html = tipHtml(target.dataset.tip || "");
+  if (!html) return hideTip();
+  if (target.dataset.detail) html += `<span class="t-note">点一下看详情。</span>`;
+  if (!tipEl.parentNode) document.body.appendChild(tipEl);
+  tipFor = target;
+  tipEl.className = target.dataset.tip.startsWith("soul:") ? "soul" : "";
+  tipEl.innerHTML = html; tipEl.hidden = false;
+  const r = target.getBoundingClientRect(), w = tipEl.offsetWidth, h = tipEl.offsetHeight, gap = 6;
+  const x = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
+  let y = r.top - h - gap;
+  if (y < 8) y = Math.min(r.bottom + gap, window.innerHeight - h - 8);
+  tipEl.style.left = x + "px"; tipEl.style.top = Math.max(8, y) + "px";
+}
+function hideTip() { tipFor = null; tipEl.hidden = true; }
+// 页面重画以后，鼠标原来停着的那样东西可能没了：没了就把框收起来；还在就把内容更新一下。
+function refreshTip() {
+  if (!tipFor) return;
+  if (!document.body.contains(tipFor)) return hideTip();
+  showTip(tipFor);
+}
+if (document.addEventListener) {
+  const over = (ev) => {
+    const t = ev.target && ev.target.closest ? ev.target.closest("[data-tip]") : null;
+    if (t) { if (t !== tipFor) showTip(t); } else if (tipFor) hideTip();
+  };
+  document.addEventListener("mouseover", over);
+  document.addEventListener("focusin", over);
+  document.addEventListener("scroll", hideTip, true);
+  document.addEventListener("mouseleave", hideTip);
+}
 
 // ---------- 连接 ----------
 
@@ -122,6 +227,7 @@ function renderJoin() {
       <label>房间号 <input type="text" id="room" maxlength="8" placeholder="留空就新开一个房间" value="${esc(location.hash.slice(1))}"></label>
       <label class="check"><input type="checkbox" id="watch"> 只观战，不上场</label>
       <button class="primary" id="go">进入房间</button>
+      <button id="opencodex">图鉴：看全部招式、人物、内功</button>
       <p class="muted">把房间号告诉朋友，他输入同一个房间号就能进来。房间里已经有两个人的话，后来的人自动观战。</p>
     </div>
     <div class="panel join replays"><h2>以前的对局</h2><div id="replaylist" class="muted">正在读取…</div></div>`;
@@ -130,6 +236,7 @@ function renderJoin() {
     store.set("shai-name", name);
     connect($("#room").value.trim(), name, $("#watch").checked);
   };
+  $("#opencodex").onclick = () => openCodex();
   loadReplayList();
 }
 
@@ -264,7 +371,7 @@ function renderLobby() {
   $("#app").innerHTML = `
     <div class="panel">
       <div class="row"><h1>房间</h1><span class="code">${esc(S.room)}</span>${seat("A")}${seat("B")}
-        ${S.watchers.length ? `<span class="muted">观战：${esc(S.watchers.join("、"))}</span>` : ""}</div>
+        ${S.watchers.length ? `<span class="muted">观战：${esc(S.watchers.join("、"))}</span>` : ""}<button id="opencodex">图鉴</button></div>
       <div class="row">
         <label>每人带 <select id="size" ${host ? "" : "disabled"}>${Array.from({ length: S.settings.max_team }, (_, i) => `<option ${i + 1 === size ? "selected" : ""}>${i + 1}</option>`).join("")}</select> 个人物</label>
         <label><input type="checkbox" id="zei" ${S.settings.zei ? "checked" : ""} ${host ? "" : "disabled"}> 用贼（石头剪刀布）决定先后手和概率</label>
@@ -279,7 +386,7 @@ function renderLobby() {
         <div class="cards">${catalog.map((c) => {
           const order = picked.indexOf(c.name);
           const inner = Object.entries(c.inner).map(([k, v]) => k + v).join(" ");
-          return `<button class="card" data-name="${esc(c.name)}" aria-pressed="${order >= 0}" ${ready || watch ? "disabled" : ""}>
+          return `<button class="card" data-name="${esc(c.name)}" data-tip="soul:${esc(c.name)}" aria-pressed="${order >= 0}" ${ready || watch ? "disabled" : ""}>
             <span class="face">${ART.has(c.name) ? `<img src="assets/characters/${encodeURIComponent(c.name)}.png" alt="">` : `<i>${esc(c.name.slice(0, 1))}</i>`}</span>
             <span class="about"><b>${order >= 0 ? (order + 1) + ". " : ""}${esc(c.name)}</b>
             <small>体力 ${c.hp / 10000} 万${c.shield ? "　盾 " + c.shield / 10000 + " 万" : ""}${c.lives > 1 ? "　" + c.lives + " 条命" : ""}　距离 ${c.distance}</small>
@@ -294,6 +401,7 @@ function renderLobby() {
     $("#timers").onchange = (e) => send({ t: "config", timers: e.target.checked });
     if ($("#bot")) $("#bot").onclick = () => send({ t: "bot" });
   }
+  $("#opencodex").onclick = () => openCodex();
   if ($("#ready")) $("#ready").onclick = () => send({ t: "team", names: ui.picked });
   if ($("#unready")) $("#unready").onclick = () => send({ t: "unready" });
   $(".cards").onclick = (ev) => {
@@ -311,33 +419,38 @@ function renderLobby() {
 const modelOf = (view) => ({
   A: view.players.A.team[view.players.A.active], B: view.players.B.team[view.players.B.active], water: view.water_level,
 });
+const choosing = () => !!S && S.need === "choose" && !playing;
+const wan = (n) => (n >= 10000 ? String(Math.round(n / 100) / 100) + " 万" : String(n));
+const faceHtml = (name) => (ART.has(name)
+  ? `<img alt="" src="assets/characters/${encodeURIComponent(name)}.png">` : `<i>${esc((name || "？").slice(0, 1))}</i>`);
 
-function benchHtml(side) {
-  if (replay && !replayDone) {      // 记录里只存了最后的局面，放完之前不显示，免得剧透
-    return `<div class="row"><b>${side}：${esc(seatName(side))}</b></div><span class="muted">场下的人物、内功和物品，放完以后显示最后的情况。</span>`;
-  }
-  const p = S.view.players[side];
-  const chips = p.team.map((f, i) => {
-    if (i === p.active) return "";
-    if (f.hidden) return `<span class="chip">？</span>`;
-    if (f.is_true_body && !f.entered) return "";
-    return `<span class="chip ${f.defeated ? "out" : ""}">${esc(f.name)}${f.defeated ? "" : " " + f.hp}</span>`;
-  }).join("");
-  const active = p.team[p.active];
+// 牌子下面那一格：内功、场下的人物、物品。头像和血条是 stage.js 画的。
+function extraHtml(side) {
+  if (replay && !replayDone) return "";       // 记录里只存了最后的局面，放完之前不显示，免得剧透
+  const p = S.view.players[side], active = p.team[p.active];
+  if (!active) return "";
   const lent = new Set(active.borrowed || []), learned = new Set(active.learned || []);
-  const inner = Object.entries(active.inner || {}).filter(([, v]) => v > 0)
-    .map(([k, v]) => `<span class="chip">${esc(k)}${v}${lent.has(k) ? "（借对手的）" : learned.has(k) ? "（学的）" : ""}</span>`).join("");
-  const traits = traitText(active.traits);
-  const tree = p.tree ? `<span class="chip">通天神树 ${p.tree}/10</span>` : "";
+  const mine = Object.entries(active.inner || {}).filter(([, v]) => v > 0);
+  const inner = mine.length > 4
+    ? `<span class="chip inner" data-tip="inners:${side}">内功 ${mine.length} 种</span>`
+    : mine.map(([k, v]) => `<span class="chip inner" data-tip="inner:${esc(k)}:${v}">${esc(k)} ${v} 级${lent.has(k) ? "（借对手的）" : learned.has(k) ? "（学的）" : ""}</span>`).join("");
+  const minis = p.team.map((f, i) => {
+    if (i === p.active) return "";
+    if (f.hidden) return `<span class="mini unknown" title="还没上过场的人物">？</span>`;
+    if (f.is_true_body && !f.entered) return "";
+    return `<button class="mini ${f.defeated ? "out" : ""}" data-tip="soul:${esc(f.name)}" data-detail="${side}:${i}" aria-label="${esc(f.name)}">${faceHtml(f.name)}<small>${f.defeated ? "倒下" : wan(f.hp).replace(" ", "")}</small></button>`;
+  }).join("");
   const items = Object.entries(active.resources || {}).filter(([, v]) => v > 0).map(([k, v]) => `<span class="chip">${esc(k)} ${v}</span>`).join("");
   const devices = Object.entries(active.devices || {}).filter(([, v]) => v > 0).map(([k, v]) => `<span class="chip">${esc(k)} 造了 ${v} 下</span>`).join("");
-  const label = inGame() ? `${who(side)}（${esc(seatName(side))}）` : `${side}：${esc(seatName(side))}`;
-  const chosen = !replay && S.view.chosen[side] && S.need !== "over";
-  return `<div class="row"><b>${label}</b>${chosen ? `<span class="chip on">已选招</span>` : ""}</div>
-    <div class="chips"><span class="muted">场下：</span>${chips || `<span class="muted">没有</span>`}</div>
-    <div class="chips"><span class="muted">内功：</span>${inner || `<span class="muted">没有</span>`}</div>
-    <div class="chips"><span class="muted">物品：</span>${items}${devices}${tree}</div>
-    ${traits ? `<div class="traits"><span class="muted">特点：</span>${esc(traits)}</div>` : ""}`;
+  const tree = p.tree ? `<span class="chip">通天神树 ${p.tree}/10</span>` : "";
+  const chosen = !replay && S.view.chosen[side] && S.need !== "over" ? `<span class="chip on">已选招</span>` : "";
+  return `<div class="chips">${chosen}${inner}</div><div class="chips">${minis}${items}${devices}${tree}</div>`;
+}
+function renderExtras() {
+  for (const side of ["A", "B"]) {
+    const el = $(`[data-extra="${side}"]`);
+    if (el) el.innerHTML = extraHtml(side);
+  }
 }
 
 function resultText(winner) {
@@ -346,47 +459,50 @@ function resultText(winner) {
   return esc(seatName(winner)) + " 赢了";
 }
 
+// 操作区上面那一行字：现在要你做什么。
 function promptHtml() {
-  const p = S.prompt || {}, L = leftSide(), R = rightSide();
-  if (playing) {
-    return `<div class="panel prompt wait"><div class="row"><span class="muted">${replay ? "正在回放…" : "正在播放这一回合…"}</span>
-      <button id="skip">${replay ? "跳到结尾" : "跳过动画"}</button></div></div>`;
-  }
+  const p = S.prompt || {}, R = rightSide();
+  if (playing) return `<span class="muted">${replay ? "正在回放…" : "正在播放这一回合…"}</span><button id="skip">${replay ? "跳到结尾" : "跳过动画"}</button>`;
   if (replay) {
-    return `<div class="panel prompt"><div class="row"><span class="over">回放结束：${resultText(p.winner)}</span>
-      <button class="primary" id="again">再放一遍</button><button id="back">返回</button>
-      <button data-log="${esc(replay.id)}">文字战报</button></div></div>`;
+    return `<span class="over">回放结束：${resultText(p.winner)}</span>
+      <button class="primary" id="again">再放一遍</button><button id="back">返回</button><button data-log="${esc(replay.id)}">文字战报</button>`;
   }
   const soFar = (p.so_far || []).length ? `<ul>${p.so_far.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : "";
   if (S.need === "over") {
     const saved = S.replay_id ? `<button data-log="${esc(S.replay_id)}">这一局的文字战报</button>` : "";
-    return `<div class="panel prompt"><div class="row"><span class="over">对战结束：${resultText(p.winner)}</span>
-      ${inGame() ? `<button class="primary" id="rematch">再来一局</button>` : ""}${saved}</div>
-      ${S.replay_id ? `<span class="muted">这一局已经保存。回到进房间的页面，在“以前的对局”里可以看回放。</span>` : ""}</div>`;
+    return `<span class="over">对战结束：${resultText(p.winner)}</span>${inGame() ? `<button class="primary" id="rematch">再来一局</button>` : ""}${saved}
+      ${S.replay_id ? `<span class="muted">这一局已经保存。回到进房间的页面，在“以前的对局”里可以看回放。</span>` : ""}`;
   }
   const sees = (S.view && S.view.sees) || {};
   if (S.need === "choose") {
-    const peek = S.view.peek;
-    const note = peek ? `<span class="peek">透视：对手这回合选了【${esc(peek.name)}】${peek.on_self ? "（打他自己）" : ""}${peek.destination ? "（去" + esc(peek.destination) + "）" : ""}。</span>`
-      : (inGame() && sees[R] ? `<span class="muted">对手能透视你：你选完以后他才选，他看得到你选了什么。</span>` : "");
     if (inGame() && S.choose_for && S.choose_for !== me.side) {
-      return `<div class="panel prompt"><b>对手这回合被你的虫子控制：现在替对手选他的招。</b>
-        <span class="muted">下面列的是对手的招。可以让他打你，也可以让他打他自己。</span></div>`;
+      return `<b>对手这回合被你的虫子控制：现在替对手选他的招。</b><span class="muted">下面列的是对手的招。可以让他打你，也可以让他打他自己。</span>`;
     }
-    return `<div class="panel prompt"><b>请选这回合的招。</b>${note}</div>`;
+    const peek = S.view.peek;
+    if (peek) return `<span class="peek">透视：对手这回合选了【${esc(peek.name)}】${peek.on_self ? "（打他自己）" : ""}${peek.destination ? "（去" + esc(peek.destination) + "）" : ""}。</span>`;
+    return inGame() && sees[R] ? `<span class="muted">对手能透视你：你选完以后他才选，他看得到你选了什么。</span>` : "";
   }
   if (S.need === "pick") {
-    return `<div class="panel prompt"><b>${esc(p.reason)}</b>${soFar}<div class="row">${p.options.map((o) => `<button class="primary" data-pick="${esc(o.id)}">${esc(o.name)}</button>`).join("")}</div></div>`;
+    return `<b>${esc(personal(p.reason))}</b>${soFar}${p.options.map((o) => `<button class="primary" data-pick="${esc(o.id)}">${esc(o.name)}</button>`).join("")}`;
   }
-  if (p.mode) return `<div class="panel prompt wait"><span class="muted">正在贼：看上面舞台中间的框。</span></div>`;
-  if (inGame() && S.need === "wait" && !S.view.chosen[me.side] && sees[me.side]) {
-    return `<div class="panel prompt wait"><b>你能透视对手。</b><span class="muted">等对手先选招，你看到他选了什么以后再选。</span></div>`;
-  }
-  if (inGame() && S.need === "wait" && S.view.control && S.view.control[me.side]) {
-    return `<div class="panel prompt wait"><b>这回合你被虫子控制。</b><span class="muted">你的招由对手来选，等他选完。</span></div>`;
-  }
-  const idle = inGame() ? "你已经选好了，等对手…" : "观战中。双方正在选招…";
-  return `<div class="panel prompt wait"><span class="muted">${p.reason ? esc(p.reason) + "…" : idle}</span></div>`;
+  if (p.mode) return `<span class="muted">正在贼：看舞台中间的框。</span>`;
+  if (p.reason) return `<span class="muted">${esc(personal(p.reason))}…</span>`;
+  return "";
+}
+
+// 舞台正中间的大字：轮到谁了。
+function centerText() {
+  if (!S || playing || replay) return "";
+  const p = S.prompt || {};
+  if (S.need === "over") return resultText(p.winner);
+  if (S.need === "choose") return inGame() && S.choose_for && S.choose_for !== me.side ? "替对手选招" : "请选招";
+  if (S.need === "pick") return "请你决定";
+  if (p.mode) return "";
+  if (!inGame()) return "双方正在选招…";
+  const sees = (S.view && S.view.sees) || {};
+  if (S.need === "wait" && !S.view.chosen[me.side] && sees[me.side]) return "你能透视：等对手先选";
+  if (S.need === "wait" && S.view.control && S.view.control[me.side]) return "你被虫子控制：等对手替你选";
+  return "等待对手…";
 }
 
 // 贼的框：放在舞台中间。出拳、打平再来、最后的结果都在这一个框里（结果由 stage.js 的 zeiResult 接着画）。
@@ -426,10 +542,16 @@ function clockText() {
   return ["A", "B"].filter((s) => left(s) != null).map((s) => `${seatName(s)}还剩 ${left(s)} 秒`).join("　");
 }
 function tickClock() {
-  const el = $("#clock"); if (!el) return;
-  const text = clockText();
-  el.textContent = text;
-  el.classList.toggle("urgent", /^你还剩 \d 秒$/.test(text));
+  const text = clockText(), urgent = /^你还剩 \d 秒$/.test(text);
+  const el = $("#clock");                       // 贼的框里的那一行
+  if (el) { el.textContent = text; el.classList.toggle("urgent", urgent); }
+  const ring = $("#clocknum"), sub = $("#clocksub");
+  if (ring) {                                   // 舞台中间的圆圈：只放数字
+    const mine = /^(你|对手)还剩 (\d+) 秒$/.exec(text);
+    ring.textContent = mine ? mine[2] : "";
+    ring.classList.toggle("urgent", urgent);
+    if (sub) sub.textContent = mine ? (mine[1] === "你" ? "" : "对手的时间") : text;
+  }
 }
 setInterval(tickClock, 250);
 
@@ -443,71 +565,196 @@ function category(a) {
   return "技能";
 }
 
+// ----- 招式卡 -----
+
+const ATTR_GLYPH = { "物理": "物", "魔法": "魔", "特技": "特", "地理": "地", "化学": "化", "生物": "生", "神技": "神", "物品": "品" };
+function badgeHtml(a) {
+  const attrs = a.attributes || [], kind = category(a);
+  if (kind === "防御") {
+    const code = DEF_OF_ACTION[a.id], file = DEF_ICON[code];
+    return file && DEF_ART.has(file) ? `<span class="badge big"><img alt="" src="assets/defense/${file}.png"></span>` : `<span class="badge big">防</span>`;
+  }
+  if (!attrs.length) return `<span class="badge" style="background:#5a6282">${kind === "内功" ? "功" : kind === "换人" ? "换" : "无"}</span>`;
+  if (attrs.length >= 8) return `<span class="badge" style="background:conic-gradient(#b5482f,#d9822b,#d4a514,#3d8f4f,#2f7fa8,#7a4fd1,#b5482f)">全</span>`;
+  const c = (n) => ATTR_COLOR[n] || "#5a6282";
+  const fill = attrs.length > 1 ? `linear-gradient(135deg, ${c(attrs[0])} 50%, ${c(attrs[1])} 50%)` : c(attrs[0]);
+  return `<span class="badge" style="background:${fill}">${ATTR_GLYPH[attrs[0]] || "？"}</span>`;
+}
+// 用什么能防住这一招：有手绘图标就画图标，没有就写字。
+function defenseCell(a) {
+  const hitsFoe = a.target === "enemy" || a.effect === "self_status_and_damage";
+  if (a.action_kind !== "skill" || !hitsFoe) return "—";
+  if (a.defense == null) return "防不住";
+  const file = DEF_ICON[a.defense];
+  const icon = file && DEF_ART.has(file) ? `<img class="deficon" alt="" src="assets/defense/${file}.png">` : "";
+  return icon + esc(DEF_NAME[a.defense] || "");
+}
+const mvRow = (label, value) => `<span class="mvrow"><span>${label}</span><b>${value}</b></span>`;
+function cardHtml(a, q, first) {
+  const self = ui.aim === "self", idle = !choosing();
+  const ok = !idle && (self ? a.self_ok : a.legal), why = self ? a.self_reason : a.reason;
+  const name = q && a.name.includes(q) ? esc(a.name).split(esc(q)).join(`<mark>${esc(q)}</mark>`) : esc(a.name);
+  let row1, row2;
+  if (a.action_kind === "learn") {
+    row1 = mvRow("现在", a.level + " 级"); row2 = mvRow("学了", a.progress + (a.next ? " / " + a.next : "") + " 下");
+  } else if (a.action_kind === "defense") {
+    row1 = mvRow("防御", "挡同一类的招"); row2 = "";
+  } else if (category(a) === "物品" && !a.damage) {      // 物品：写现在手里有几个
+    const res = a.effect === "panacea" ? "万灵丹" : a.action_kind === "collect" ? a.name.replace(/^收集/, "") : null;
+    const side = (inGame() && S.choose_for) || leftSide(), p = S.view.players[side], f = p.team[p.active] || {};
+    row1 = res && f.resources && res in f.resources ? mvRow("现有", f.resources[res] + " 个") : mvRow("物品", a.action_kind === "build" ? "造一下" : "用一次");
+    row2 = a.target === "enemy" ? mvRow("防御", defenseCell(a)) : "";
+  } else {
+    const st = (a.statuses || [])[0];
+    row1 = a.damage ? mvRow("威力", wan(a.damage)) : st ? mvRow("特效", esc(st[0]) + " " + st[1] + " 回合") : mvRow("威力", "—");
+    row2 = mvRow("防御", defenseCell(a));
+  }
+  // 现在用不了的招：第二行换成用不了的原因
+  const rows = !idle && !ok && why ? row1 + `<span class="mvwhy">${esc(personal(why))}</span>` : row1 + row2;
+  return `<button class="mv ${ok ? "" : "off"} ${idle ? "idle" : ""} ${first && ok ? "first" : ""}" data-action="${esc(a.id)}" data-tip="act:${esc(a.id)}" aria-disabled="${ok ? "false" : "true"}">
+    ${badgeHtml(a)}<span class="mvbody"><b class="mvname">${name}</b>${rows}</span></button>`;
+}
+
+// 搜索：汉字或拼音首字母。数字越小越靠前，-1 是没搜到。
+function pyOf(a) {
+  if (a.action_kind === "learn") return "x" + ((codexIndex.inner[a.inner] || {}).py || "");
+  if (a.action_kind === "switch") return "hs" + ((codexIndex.char[a.name.replace(/^换上/, "")] || {}).py || "").split(" ")[0];
+  return (codexIndex.skill[a.id] || {}).py || "";
+}
+function searchRank(name, py, q) {
+  const k = q.toLowerCase(), list = String(py || "").split(" ").filter(Boolean);
+  if (name.startsWith(q)) return 0;
+  if (list.some((p) => p.startsWith(k))) return 1;
+  if (name.includes(q)) return 2;
+  if (list.some((p) => p.includes(k))) return 3;
+  return -1;
+}
+const recentIds = () => { try { return JSON.parse(store.get("shai-recent") || "[]"); } catch (e) { return []; } };
+function remember(id) {
+  if (id.startsWith("switch:")) return;         // 换人按位置编号，换一局就不对了，不记
+  store.set("shai-recent", JSON.stringify([id].concat(recentIds().filter((x) => x !== id)).slice(0, 8)));
+}
+
+// 队伍卡：点“换人”的时候下面换成这一排。
+function teamHtml() {
+  const side = (inGame() && S.choose_for) || leftSide(), p = S.view.players[side], can = choosing();
+  return p.team.map((f, i) => {
+    if (f.hidden || (f.is_true_body && !f.entered)) return "";
+    const act = (S.actions || []).find((a) => a.id === "switch:" + i);
+    const active = i === p.active, ok = can && !!act && act.legal;
+    const pct = Math.max(0, Math.min(100, (100 * f.hp) / Math.max(1, f.max_hp)));
+    const bad = Object.keys(f.statuses || {}).concat(Object.keys(f.parasites || {}));
+    const sub = active ? "正在场上" : f.defeated ? "已经倒下" : (bad.length ? bad.join("、") : "没有不良状态");
+    return `<button class="tm ${active ? "on" : ""} ${ok ? "" : "off"}" ${ok ? `data-action="switch:${i}"` : ""} data-tip="soul:${esc(f.name)}" aria-disabled="${ok ? "false" : "true"}">
+      <span class="face">${faceHtml(f.name)}</span><span class="mvbody"><b class="mvname">${esc(f.name)}${f.lives_total > 1 ? ` <span class="lives">${"●".repeat(Math.max(0, f.lives_remaining))}</span>` : ""}</b>
+      <span class="bar"><i style="width:${pct}%"></i><span>${f.hp} / ${f.max_hp}</span></span><span class="tmsub">${esc(sub)}</span></span></button>`;
+  }).join("");
+}
+
 function actionsHtml() {
-  if (S.need !== "choose" || playing) return "";
-  const self = ui.aim === "self";                    // 打自己的时候只列能对自己用的招
-  const list = (S.actions || []).filter((a) => (ui.tab === "全部" || category(a) === ui.tab) && (!ui.search || a.name.includes(ui.search))
-    && (!self || a.self_ok != null));
-  const tier = (t) => (t >= 60 ? "换人最先" : t >= 40 ? "比神技快" : t >= 30 ? "神技档" : t >= 20 ? "先手" : "");
-  return list.map((a) => {
-    const info = [a.attributes.join("+") || (a.action_kind === "skill" ? "无属性" : ""), a.damage ? "伤害 " + a.damage / 10000 + " 万" : "",
-      a.defense ? "防 " + a.defense : "", tier(a.tier)].filter(Boolean).join(" · ");
-    const extra = a.action_kind === "learn"
-      ? "现在 " + a.level + " 级，学了 " + a.progress + " 下" + (a.next ? "，到 " + a.next + " 下升级" : "")
-      : (a.statuses || []).map(([n, t]) => n + t).join(" ");
-    const color = ATTR_COLOR[a.attributes[0]] || "transparent";
-    const ok = self ? a.self_ok : a.legal, why = self ? a.self_reason : a.reason;
-    return `<button class="action" style="border-left-color:${color}" data-action="${esc(a.id)}" ${ok ? "" : "disabled"} title="${esc(ok ? a.description || "" : why)}">
-      <b>${esc(a.name)}${a.defense ? defIcon(a.defense, "用" + DEF_NAME[a.defense] + "能防住") : ""}${DEF_OF_ACTION[a.id] ? defIcon(DEF_OF_ACTION[a.id], DEF_NAME[DEF_OF_ACTION[a.id]] + "的手势") : ""}</b><small>${esc(info)}</small>${extra ? `<small>${esc(extra)}</small>` : ""}${ok ? "" : `<small>${esc(why)}</small>`}${!self && ok && a.warning ? `<small class="warn">${esc(a.warning)}</small>` : ""}</button>`;
-  }).join("") || `<span class="muted">${self ? "这一类里没有能对自己用的招。" : "没有符合的招。"}</span>`;
+  const all = (choosing() ? S.actions : ui.lastActions) || [];
+  if (!all.length && ui.mode !== "switch") return "";
+  const self = ui.aim === "self", q = ui.search;
+  const list = all.filter((a) => !self || a.self_ok != null);       // 打自己的时候只列能对自己用的招
+  const group = (title, items, opts = {}) => (items.length || opts.always
+    ? `<div class="grp">${title}</div>` + (items.map((a, i) => cardHtml(a, opts.q, opts.first && i === 0)).join("") || `<span class="muted">${opts.empty || ""}</span>`)
+    : "");
+  if (q) {
+    const hits = list.map((a) => [searchRank(a.name, pyOf(a), q), a]).filter(([r]) => r >= 0).sort((x, y) => x[0] - y[0]).map(([, a]) => a);
+    return group(`搜到 ${hits.length} 个${hits.length && choosing() ? "，按回车出第一个能用的" : ""}`, hits, { q, always: true, empty: "没有叫这个名字的招。", first: true });
+  }
+  if (ui.mode === "switch") return `<div class="grp">换谁上场：换人占这个回合的出招，比所有的招都先生效。</div>` + teamHtml();
+  if (ui.mode === "items") return group("物品", list.filter((a) => category(a) === "物品"), { always: true, empty: self ? "没有能对自己用的物品。" : "" });
+  const moves = list.filter((a) => !["防御", "换人", "物品"].includes(category(a)));
+  if (ui.tab !== "全部") return group(ui.tab, moves.filter((a) => category(a) === ui.tab), { always: true, empty: "这一类里没有招。" });
+  const recent = recentIds().map((id) => list.find((a) => a.id === id)).filter(Boolean).slice(0, 4);
+  return group("最近用过", recent) + group("全部招式（往下滚，或者在左边搜）", moves, { always: true });
+}
+
+// 搜索框下面的一排防御：用得最多，随时一点就出。
+function defenseRowHtml() {
+  const all = (choosing() ? S.actions : ui.lastActions) || [], idle = !choosing();
+  return ["d1", "d2", "d3", "d4", "dj", "ds"].map((id) => {
+    const a = all.find((x) => x.id === id); if (!a) return "";
+    const ok = !idle && a.legal, code = DEF_OF_ACTION[id], file = DEF_ICON[code];
+    const inside = file && DEF_ART.has(file) ? `<img alt="" src="assets/defense/${file}.png">` : esc(DEF_NAME[code].replace("防御", "防"));
+    return `<button class="def ${ok ? "" : "off"}" data-action="${id}" data-tip="act:${id}" aria-disabled="${ok ? "false" : "true"}" aria-label="${esc(DEF_NAME[code])}">${inside}<small>${esc(DEF_NAME[code].replace("防御", "防"))}</small></button>`;
+  }).join("");
 }
 
 function appendLog(text) {
-  const log = $("#log"); if (!log) return;
-  const p = document.createElement("p");
-  p.className = /^第\d+回合：/.test(text) ? "round" : text.startsWith("贼（") ? "zei" : "";
-  p.textContent = text;
-  log.appendChild(p); log.scrollTop = log.scrollHeight;
+  const shown = personal(text), cls = /^第\d+回合：/.test(text) ? "round" : text.startsWith("贼（") ? "zei" : "";
+  const log = $("#log");
+  if (log) {
+    const p = document.createElement("p");
+    p.className = cls; p.textContent = shown;
+    log.appendChild(p); log.scrollTop = log.scrollHeight;
+  }
+  ui.feed = (ui.feed || []).concat([shown]).slice(-3);
+  const feed = $("#feed");
+  if (feed) feed.innerHTML = ui.feed.map((line) => `<span>${esc(line)}</span>`).join("");
 }
 
+// 舞台上方正中：两边在哪一层、第几回合、各剩几个人。
 function topHtml() {
-  const v = S.view, buttons = `<button id="speed">动画速度 ${stage && stage.speed > 1 ? "2×" : "1×"}</button><button id="mute">${Sfx.muted ? "声音：关" : "声音：开"}</button>`;
-  if (replay) {
-    return `<span><b>回放</b>　${when(replay.ended_at)}　${esc(replay.names.A)} 对 ${esc(replay.names.B)}　共 ${replay.rounds} 回合</span>
-      <span class="row">${buttons}<button id="back">返回</button></span>`;
-  }
-  const mine = inGame() ? S.seats[me.side] : null;
-  const watchers = S.watchers.length ? `　观战：${esc(S.watchers.join("、"))}` : "";
-  return `<span><b>房间 ${esc(S.room)}</b>　第 ${v.round} 回合　水面高度 ${v.water_level}　${v.zei_enabled ? "用贼" : "不用贼（电脑掷概率）"}　${S.settings.timers ? "限时" : "不限时"}${inGame() ? "" : "　你在观战"}${watchers}</span>
-    <span class="row">${mine && v.zei_enabled ? `<label><input type="checkbox" id="auto" ${mine.auto_zei ? "checked" : ""}> 电脑替我出拳</label>` : ""}
-    ${buttons}<button id="back">${inGame() ? "退出" : "离开"}</button></span>`;
+  const v = S.view, L = leftSide(), R = rightSide();
+  if (replay) return `<div class="rnd"><b>回放</b><span>${when(replay.ended_at)}</span><span>${esc(replay.names.A)} 对 ${esc(replay.names.B)}</span><span>共 ${replay.rounds} 回合</span></div>`;
+  const now = (side) => (stage && stage.model && stage.model[side]) || v.players[side].team[v.players[side].active] || {};
+  const a = now(L), b = now(R);
+  const alive = (side) => v.players[side].team.filter((f) => !f.defeated && !(f.is_true_body && !f.entered)).length;
+  const rel = a.height === b.height ? "同一层" : a.height > b.height ? `${who(L)}在上面` : `${who(R)}在上面`;
+  const water = v.water_level < 0 ? "" : `<span>水面高度 ${v.water_level}</span>`;
+  const watchers = S.watchers.length ? `<span>观战：${esc(S.watchers.join("、"))}</span>` : "";
+  return `<div class="vs"><div>${esc(a.scene || "")}<small>高度 ${a.height ?? ""}</small></div><i>›››</i><i>‹‹‹</i><div>${esc(b.scene || "")}<small>高度 ${b.height ?? ""}</small></div></div>
+    <div class="rnd"><span>${alive(L)} 人</span><b>第 ${v.round} 回合</b><span>${alive(R)} 人</span></div>
+    <div class="rnd csub"><span>${rel}</span><span>房间 ${esc(S.room)}</span>${water}${inGame() ? "" : "<span>你在观战</span>"}${watchers}</div>`;
 }
+// 舞台右边的一列小圆钮：动画速度、声音、战报和聊天、退出。
+function sideHtml() {
+  const unread = replay ? 0 : Math.max(0, ((S.chat || []).filter((c) => c.who !== "sys").length) - (ui.chatSeen || 0));
+  const mine = inGame() && S.view.zei_enabled ? S.seats[me.side] : null;
+  const auto = mine ? `<button id="autozei" aria-pressed="${!!mine.auto_zei}" title="贼的时候电脑替我出拳：现在${mine.auto_zei ? "开着" : "关着"}">代贼</button>` : "";
+  return `<button id="speed" title="动画速度">${stage && stage.speed > 1 ? "×2" : "×1"}</button>${auto}
+    <button id="mute" title="声音">${Sfx.muted ? "静音" : "有声"}</button>
+    <button id="openlog" title="战报和聊天">战报${unread ? `<span class="dot">${unread}</span>` : ""}</button>
+    <button id="back" title="${inGame() ? "退出" : "离开"}">${inGame() ? "退出" : "离开"}</button>`;
+}
+
+const TRAY_TABS = ["全部", "技能", "神技", "专属", "内功"];
+const MODES = [["moves", "战斗"], ["items", "物品"], ["switch", "换人"], ["codex", "图鉴"]];
 
 function renderControls() {
   if (!$("#battle") || !S || S.phase === "lobby") return;
   $("#top").innerHTML = topHtml();
+  $("#side").innerHTML = sideHtml();
   $("#prompt").innerHTML = promptHtml();
   const box = $("#stage .zeibox");
   if (box && !playing) {                       // 播放的时候这个框归舞台管（它要在里面亮出贼的结果）
     const html = zeiPanelHtml();
-    if (html) {
-      if (box.hidden) $("#stage").scrollIntoView({ block: "nearest" });
-      box.innerHTML = html; box.hidden = false;
-    } else { box.hidden = true; box.innerHTML = ""; }
+    if (html) { box.innerHTML = html; box.hidden = false; } else { box.hidden = true; box.innerHTML = ""; }
   }
-  const panel = $("#prompt .panel");
-  if (panel && !$("#clock")) panel.insertAdjacentHTML("beforeend", `<span class="clock" id="clock"></span>`);
+  const text = centerText(), center = $("#center");
+  center.hidden = playing || (box && !box.hidden);
+  $("#ctext").textContent = text;
   tickClock();
-  const choosing = S.need === "choose" && !playing;
-  $("#actionbox").hidden = !choosing;
-  if (!choosing) ui.sceneAction = null;
-  $("#tabs").innerHTML = TABS.map((t) => `<button data-tab="${t}" aria-pressed="${t === ui.tab}">${t}</button>`).join("");
+  const can = choosing();
+  if (can) ui.lastActions = S.actions;
+  else ui.sceneAction = null;
+  $("#tray").classList.toggle("idle", !can);
   const proxy = inGame() && S.choose_for && S.choose_for !== me.side;       // 正在替被控制的对手选招
-  $("#aim").innerHTML = `<span>这一招打：</span><button data-aim="foe" aria-pressed="${ui.aim === "foe"}">${proxy ? "你" : "对手"}</button><button data-aim="self" aria-pressed="${ui.aim === "self"}">${proxy ? "他自己" : "自己"}</button>
+  $("#aim").innerHTML = `<span>这一招打</span><button data-aim="foe" aria-pressed="${ui.aim === "foe"}">${proxy ? "你" : "对手"}</button><button data-aim="self" aria-pressed="${ui.aim === "self"}">${proxy ? "他自己" : "自己"}</button>
     ${ui.aim === "self" ? `<span class="warn">打自己：不用躲，够不着也能用，伤害和特效都落在自己身上。</span>` : ""}`;
+  $("#defrow").innerHTML = defenseRowHtml();
+  $("#tabs").innerHTML = ui.mode === "moves" && !ui.search
+    ? TRAY_TABS.map((t) => `<button data-tab="${t}" aria-pressed="${t === ui.tab}">${t}</button>`).join("") : "";
+  $("#modes").innerHTML = MODES.map(([id, name]) => `<button data-mode="${id}" aria-pressed="${id === ui.mode && !ui.search}"><span>${name}</span></button>`).join("");
   $("#scenepick").innerHTML = ui.sceneAction ? `<div class="row"><b>去哪个场景？</b>${scenes.map((s) => `<button data-scene="${esc(s.name)}">${esc(s.name)}</button>`).join("")}<button>取消</button></div>` : "";
   $("#actions").innerHTML = actionsHtml();
+  renderExtras();
   renderChat();
+  refreshTip();
+  if (can && !ui.wasChoosing && !/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || "")) $("#search").focus({ preventScroll: true });
+  ui.wasChoosing = can;
 }
 
 // 把还没播过的事件一条一条播出来：战报文字直接追加，其它的交给舞台做动画。
@@ -533,7 +780,6 @@ async function pump() {
   if (stage && S && S.view) {
     stage.skipping = false;
     if (!S.paused) stage.setModel(modelOf(S.view));   // 播完以后和服务器的局面对齐；停在半路时以已播的事件为准
-    $("#bench-me").innerHTML = benchHtml(leftSide()); $("#bench-foe").innerHTML = benchHtml(rightSide());
   }
   renderControls();
 }
@@ -541,60 +787,97 @@ async function pump() {
 // 回到进房间的页面。上场的人留着房间号：座位还给他留着，再进同一个房间可以接着打。
 function leave() { if (!inGame()) location.hash = ""; location.reload(); }
 
+function chooseAction(id) {
+  const action = (S.actions || []).find((a) => a.id === id);
+  if (!action || !choosing()) return;
+  if (action.effect === "choose_scene") { ui.sceneAction = id; renderControls(); return; }
+  send({ t: "choose", action: id, on_self: ui.aim === "self", for: S.choose_for });
+  remember(id);
+  ui.aim = "foe"; ui.search = ""; $("#search").value = "";
+  hideTip();
+}
+
+function toggleDrawer(open) {
+  const drawer = $("#drawer"); if (!drawer) return;
+  drawer.hidden = open === undefined ? !drawer.hidden : !open;
+  if (!drawer.hidden) {
+    ui.chatSeen = (S.chat || []).filter((c) => c.who !== "sys").length;
+    const log = $("#log"); log.scrollTop = log.scrollHeight;
+  }
+  renderControls();
+}
+
 function renderBattle() {
   if (!$("#battle")) {
+    document.body.classList.add("battle");
     $("#app").innerHTML = `<div id="battle">
-      <div class="panel"><div class="row top" id="top"></div></div>
-      <div class="panel stagebox"><div id="stage"></div>
-        <div class="benches"><div id="bench-me"></div><div id="bench-foe"></div></div></div>
-      <div id="prompt"></div>
-      <div class="lower">
-        <div class="panel" id="actionbox">
-          <div class="row"><div class="row tabs" id="tabs"></div><input type="text" id="search" placeholder="搜招式名字"></div>
-          <div class="row aim" id="aim"></div>
-          <div id="scenepick"></div>
-          <div class="actions" id="actions"></div>
+      <div class="stagewrap">
+        <div id="stage"></div>
+        <div id="top"></div>
+        <div id="center" hidden><b class="cring" id="clocknum"></b><span class="ctext" id="ctext"></span><span class="csub" id="clocksub"></span></div>
+        <div id="side"></div>
+        <button id="feed" title="点开看全部战报"></button>
+      </div>
+      <div id="tray">
+        <div id="trayleft">
+          <div class="searchbox">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#cfe2ff" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.8-3.8"></path></svg>
+            <input type="text" id="search" placeholder="搜招式，可打拼音首字母" autocomplete="off" spellcheck="false" aria-label="搜招式">
+          </div>
+          <div class="defrow" id="defrow"></div>
+          <div class="aim" id="aim"></div>
         </div>
-        <div class="panel logbox"><div class="row"><h2>战报</h2><button id="copylog">复制战报</button></div><div class="log" id="log"></div>
-          ${replay ? "" : `<h2>聊天</h2>${chatBoxHtml()}`}</div>
+        <div id="traymid"><div id="prompt"></div><div class="tabs" id="tabs"></div><div id="scenepick"></div><div id="actions"></div></div>
+        <div id="modes"></div>
+      </div>
+      <div id="drawer" hidden>
+        <div class="row"><h2>战报</h2><span class="row"><button id="copylog">复制战报</button><button id="closedrawer">关闭</button></span></div>
+        <div class="log" id="log"></div>
+        ${replay ? "<span></span><span></span><span></span>" : `<h2>聊天</h2>${chatBoxHtml()}`}
       </div></div>`;
-    $("#search").oninput = (e) => { ui.search = e.target.value.trim(); $("#actions").innerHTML = actionsHtml(); };
-    $("#tabs").onclick = (ev) => { const b = ev.target.closest("button"); if (b) { ui.tab = b.dataset.tab; renderControls(); } };
-    $("#actions").onclick = (ev) => {
-      const b = ev.target.closest(".action"); if (!b || b.disabled) return;
-      const action = S.actions.find((a) => a.id === b.dataset.action);
-      if (action.effect === "choose_scene") { ui.sceneAction = action.id; renderControls(); }
-      else { send({ t: "choose", action: action.id, on_self: ui.aim === "self", for: S.choose_for }); ui.aim = "foe"; }
+    const search = $("#search");
+    search.oninput = () => { ui.search = search.value.trim(); renderControls(); };
+    search.onkeydown = (ev) => {
+      if (ev.key === "Enter") { const first = $('#actions [data-action][aria-disabled="false"]'); if (first) chooseAction(first.dataset.action); }
+      else if (ev.key === "Escape") { search.value = ""; ui.search = ""; renderControls(); }
     };
-    $("#aim").onclick = (ev) => { const b = ev.target.closest("button"); if (b) { ui.aim = b.dataset.aim; renderControls(); } };
-    $("#scenepick").onclick = (ev) => {
+    $("#tray").onclick = (ev) => {
       const b = ev.target.closest("button"); if (!b) return;
-      if (b.dataset.scene) send({ t: "choose", action: ui.sceneAction, destination: b.dataset.scene });
-      ui.sceneAction = null; renderControls();
+      if (b.dataset.action) { if (b.getAttribute("aria-disabled") !== "true") chooseAction(b.dataset.action); return; }
+      if (b.dataset.tab) ui.tab = b.dataset.tab;
+      else if (b.dataset.aim) ui.aim = b.dataset.aim;
+      else if (b.dataset.mode === "codex") return openCodex();
+      else if (b.dataset.mode) { ui.mode = b.dataset.mode; ui.search = ""; $("#search").value = ""; }
+      else if (b.closest("#scenepick")) {
+        if (b.dataset.scene) send({ t: "choose", action: ui.sceneAction, destination: b.dataset.scene });
+        ui.sceneAction = null;
+      } else if (b.dataset.pick) return send({ t: "pick", option: b.dataset.pick });
+      else if (b.id === "rematch") return send({ t: "rematch" });
+      else if (b.id === "skip") { if (stage) stage.skipping = true; return; }
+      else if (b.id === "again") return startReplay();
+      else if (b.id === "back") return leave();
+      else if (b.dataset.log) return showSavedLog(b.dataset.log);
+      else return;
+      renderControls();
     };
-    $("#prompt").onclick = (ev) => {
-      const b = ev.target.closest("button"); if (!b) return;
-      if (b.dataset.hand) send({ t: "throw", hand: b.dataset.hand });
-      else if (b.dataset.redo) send({ t: "redo", yes: b.dataset.redo === "1" });
-      else if (b.dataset.pick) send({ t: "pick", option: b.dataset.pick });
-      else if (b.id === "rematch") send({ t: "rematch" });
-      else if (b.id === "skip" && stage) stage.skipping = true;
-      else if (b.id === "again") startReplay();
-      else if (b.id === "back") leave();
-      else if (b.dataset.log) showSavedLog(b.dataset.log);
-    };
-    $("#copylog").onclick = () => showText("这一局到现在的战报", events.filter((e) => e.t === "log").map((e) => e.text).join("\n"));
-    $("#stage").onclick = (ev) => {             // 贼的框在舞台里：出拳、重贼的按钮在这里接
+    $("#stage").onclick = (ev) => {             // 贼的框在舞台里：出拳、重贼的按钮在这里接；点人物或头像看详情
+      const detail = ev.target.closest("[data-detail]");
+      if (detail) return showDetail(detail.dataset.detail);
       const b = ev.target.closest("button"); if (!b || b.disabled) return;
       if (b.dataset.hand) send({ t: "throw", hand: b.dataset.hand });
       else if (b.dataset.redo) send({ t: "redo", yes: b.dataset.redo === "1" });
     };
-    $("#top").onchange = (ev) => { if (ev.target.id === "auto") send({ t: "auto", on: ev.target.checked }); };
-    $("#top").onclick = (ev) => {
-      if (ev.target.id === "speed" && stage) { stage.speed = stage.speed > 1 ? 1 : 2.2; store.set("shai-speed", String(stage.speed)); renderControls(); }
-      if (ev.target.id === "mute") { Sfx.muted = !Sfx.muted; store.set("shai-mute", Sfx.muted ? "1" : ""); renderControls(); }
-      if (ev.target.id === "back") leave();
+    $("#side").onclick = (ev) => {
+      const b = ev.target.closest("button"); if (!b) return;
+      if (b.id === "speed" && stage) { stage.speed = stage.speed > 1 ? 1 : 2.2; store.set("shai-speed", String(stage.speed)); renderControls(); }
+      if (b.id === "mute") { Sfx.muted = !Sfx.muted; store.set("shai-mute", Sfx.muted ? "1" : ""); renderControls(); }
+      if (b.id === "autozei") send({ t: "auto", on: b.getAttribute("aria-pressed") !== "true" });
+      if (b.id === "openlog") toggleDrawer();
+      if (b.id === "back") leave();
     };
+    $("#feed").onclick = () => toggleDrawer(true);
+    $("#closedrawer").onclick = () => toggleDrawer(false);
+    $("#copylog").onclick = () => showText("这一局到现在的战报", events.filter((e) => e.t === "log").map((e) => e.text).join("\n"));
     bindChat();
   }
   if (!stage) {
@@ -603,21 +886,109 @@ function renderBattle() {
     stage.speed = Number(store.get("shai-speed")) > 1 ? 2.2 : 1;
     Sfx.muted = store.get("shai-mute") === "1";
     stage.setModel(modelOf(replay ? replay.start_view : S.view));
-    $("#log").innerHTML = "";
+    $("#log").innerHTML = ""; ui.feed = []; $("#feed").innerHTML = "";
     played = 0;
     if (!replay && events.length > 14) {      // 中途进来（比如刷新页面、半路来观战）：之前的回合不重播，只把战报补上
       for (const ev of events) if (ev.t === "log") appendLog(ev.text);
       played = events.length;
     }
   }
-  $("#bench-me").innerHTML = benchHtml(leftSide()); $("#bench-foe").innerHTML = benchHtml(rightSide());
   renderControls();
   pump();
 }
 
-function render() {
-  if (!S) return;
-  if (S.phase === "lobby") renderLobby(); else renderBattle();
+// ---------- 人物详情：点人物或头像弹出来 ----------
+
+function closeModal() { const m = $("#modal"); if (m) m.remove(); hideTip(); }
+function openModal(title, body, cls) {
+  closeModal();
+  const m = document.createElement("div");
+  m.id = "modal"; m.className = "modal";
+  m.innerHTML = `<div class="dialog" role="dialog" aria-label="${esc(title)}"><div class="dhead"><span>${esc(title)}</span><button class="x" aria-label="关闭">×</button></div><div class="dbody ${cls || ""}">${body}</div></div>`;
+  m.addEventListener("click", (ev) => { if (ev.target === m || ev.target.closest(".x")) closeModal(); });
+  document.body.appendChild(m);
+  return m;
+}
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeModal(); });
+
+// key：“A”这种是场上的人物；“A:2”是这一方的第 3 个人物。
+function showDetail(key) {
+  if (!S || !S.view) return;
+  const [side, index] = key.split(":"), p = S.view.players[side]; if (!p) return;
+  const live = index === undefined && stage && stage.model && stage.model[side];       // 场上的人物以舞台上正显示的为准
+  const f = live || p.team[index === undefined ? p.active : +index];
+  if (!f || f.hidden) return;
+  const card = codexIndex.char[f.name] || { lines: [] };
+  const lent = new Set(f.borrowed || []), learned = new Set(f.learned || []);
+  const inner = Object.entries(f.inner || {}).filter(([, v]) => v > 0).map(([k, v]) => {
+    const c = codexIndex.inner[k], line = c && c.lines[v - 1] ? c.lines[v - 1][1].replace(/^\d 级：/, "") : "";
+    return `<span><b>${esc(k)} ${v} 级${lent.has(k) ? "（借对手的）" : learned.has(k) ? "（学的）" : ""}</b>　${esc(line)}</span>`;
+  }).join("") || `<span class="muted">没有内功。</span>`;
+  const st = Object.entries(f.statuses || {}).map(([n, s]) => `<span><b>${esc(n)} ${s.turns} 回合</b>　${esc((codexIndex.status[n] || {}).text || "")}</span>`)
+    .concat(Object.entries(f.parasites || {}).map(([n, x]) => `<span><b>${esc(n)} ×${x.count}</b>　${esc((codexIndex.parasite[n] || {}).text || "")}</span>`)).join("")
+    || `<span class="muted">没有状态，也没有虫子。</span>`;
+  const items = Object.entries(f.resources || {}).filter(([, v]) => v > 0).map(([k, v]) => `${esc(k)} ${v}`).join("、") || "没有";
+  const owner = inGame() ? (side === me.side ? "你" : "对手") : seatName(side);
+  const body = `<div class="dcol">
+      <div class="dsec">基础信息</div>
+      <div class="dbase"><span class="face">${faceHtml(f.name)}</span>
+        <div class="dl"><span>名字</span><b>${esc(f.name)}</b><span>谁的人物</span><b>${esc(owner)}</b>
+          <span>体力</span><b>${f.hp} / ${f.max_hp}</b>${f.max_shield ? `<span>盾牌</span><b>${f.shield} / ${f.max_shield}</b>` : ""}
+          <span>命</span><b>还有 ${f.lives_remaining} 条，一共 ${f.lives_total} 条</b>
+          <span>在哪儿</span><b>${esc(f.scene)}（高度 ${f.height}）</b><span>累计辐射</span><b>${f.radiation || 0} / 15</b><span>物品</span><b>${items}</b></div></div>
+      <div class="dsec">内功</div><div class="dlist">${inner}</div>
+      <div class="dsec">身上的状态和虫子</div><div class="dlist">${st}</div>
+    </div>
+    <div class="dcol"><div class="dsec">魂印</div><div class="dtext">${tipLines(card.lines)}</div></div>`;
+  openModal("人物详情", body);
 }
 
+// ---------- 图鉴：全部招式、人物、内功、状态、场景 ----------
+
+const CODEX_TABS = ["招式", "人物", "内功", "状态和虫子", "场景"];
+const cx = { tab: "招式", q: "", key: null };
+function codexItems(tab) {
+  if (!CODEX) return [];
+  if (tab === "招式") return CODEX.skills.map((s) => ({ key: s.id, name: s.name, py: s.py, group: s.kind, tag: s.tag, lines: s.lines, color: ATTR_COLOR[s.attributes[0]] }));
+  if (tab === "人物") return CODEX.characters.map((c) => ({ key: c.name, name: c.name, py: c.py, group: c.group, tag: "魂印", lines: c.lines }));
+  if (tab === "内功") return CODEX.inner.map((c) => ({ key: c.name, name: c.name, py: c.py, group: "内功", tag: "内功", lines: c.lines }));
+  if (tab === "场景") return CODEX.scenes.map((c) => ({ key: c.name, name: c.name, py: "", group: "场景（从高到低）", tag: "场景", lines: c.lines }));
+  return CODEX.statuses.map((c) => ({ key: "s:" + c.name, name: c.name, py: "", group: c.good ? "好状态" : "不良状态", tag: c.good ? "好状态" : "不良状态", lines: [["text", c.text]] }))
+    .concat(CODEX.parasites.map((c) => ({ key: "p:" + c.name, name: c.name, py: "", group: "虫子", tag: "虫子", lines: [["text", c.text]] })));
+}
+function codexHtml() {
+  let items = codexItems(cx.tab);
+  if (cx.q) items = items.map((it) => [searchRank(it.name, it.py, cx.q), it]).filter(([r]) => r >= 0).sort((a, b) => a[0] - b[0]).map(([, it]) => it);
+  const picked = items.find((it) => it.key === cx.key) || items[0];
+  let last = null;
+  const list = items.map((it) => {
+    const head = !cx.q && it.group !== last ? `<div class="grp">${esc(it.group)}</div>` : "";
+    last = it.group;
+    return `${head}<button data-cx="${esc(it.key)}" aria-pressed="${picked && it.key === picked.key}">${it.color ? `<i class="dotc" style="background:${it.color}"></i>` : ""}${esc(it.name)}</button>`;
+  }).join("") || `<span class="muted">没有搜到。</span>`;
+  const detail = picked ? `<div class="cxname">${esc(picked.name)} <small>（${esc(picked.tag)}）</small></div><div class="dtext">${tipLines(picked.lines)}</div>` : "";
+  return `<div class="dcol"><div class="dtabs">${CODEX_TABS.map((t) => `<button data-cxtab="${t}" aria-pressed="${t === cx.tab}">${t}</button>`).join("")}</div>
+      <div class="cxtools"><input type="text" id="cxq" placeholder="搜名字或拼音首字母" value="${esc(cx.q)}" autocomplete="off" spellcheck="false" aria-label="在图鉴里搜"></div>
+      <div class="cxlist">${list}</div></div>
+    <div class="dcol">${detail}</div>`;
+}
+function openCodex() {
+  if (!CODEX) return toast("图鉴的文字还没读到，稍等一下再点。");
+  const m = openModal("图鉴", codexHtml(), "cx"), body = $(".dbody", m);
+  const redraw = (focus) => { body.innerHTML = codexHtml(); if (focus) { const q = $("#cxq", m); q.focus(); q.setSelectionRange(q.value.length, q.value.length); } };
+  body.addEventListener("click", (ev) => {
+    const b = ev.target.closest("button"); if (!b) return;
+    if (b.dataset.cxtab) { cx.tab = b.dataset.cxtab; cx.key = null; cx.q = ""; redraw(); }
+    else if (b.dataset.cx) { cx.key = b.dataset.cx; redraw(); }
+  });
+  body.addEventListener("input", (ev) => { if (ev.target.id === "cxq") { cx.q = ev.target.value.trim(); cx.key = null; redraw(true); } });
+  $("#cxq", m).focus();
+}
+
+function render() {
+  if (!S) return;
+  if (S.phase === "lobby") { document.body.classList.remove("battle"); renderLobby(); } else renderBattle();
+}
+
+loadCodex();
 renderJoin();
