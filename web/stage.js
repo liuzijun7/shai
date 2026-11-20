@@ -89,7 +89,12 @@ class Stage {
     const pct = (a, b) => Math.max(0, Math.min(100, (100 * a) / Math.max(1, b)));
     const chips = [];
     for (const [n, s] of Object.entries(f.statuses || {})) chips.push(`<span class="chip ${GOOD_STATUS.includes(n) ? "good" : "bad"}" data-tip="status:${esc(n)}">${esc(n)} ${s.turns} 回合</span>`);
-    for (const [n, p] of Object.entries(f.parasites || {})) chips.push(`<span class="chip bad" data-tip="parasite:${esc(n)}">${esc(n)}×${p.count}</span>`);
+    for (const [n, p] of Object.entries(f.parasites || {})) {
+      // 控制绦虫每到第 5 个回合才控制一次：写出还差几回合，不然看不出它什么时候起作用
+      const left = n === "控制绦虫" && p.age != null ? 4 - (p.age % 5) : null;
+      const when = left == null ? "" : left === 0 ? "（这回合控制）" : `（再过 ${left} 回合控制）`;
+      chips.push(`<span class="chip bad" data-tip="parasite:${esc(n)}">${esc(n)}×${p.count}${when}</span>`);
+    }
     if (f.radiation) chips.push(`<span class="chip bad" data-tip="text:辐射满 15 次丢一条命，大难不死救不回来。">辐射 ${f.radiation}/15</span>`);
     const lives = f.lives_total > 1 ? `<span class="lives" title="还有 ${Math.max(0, f.lives_remaining)} 条命，一共 ${f.lives_total} 条">${"●".repeat(Math.max(0, f.lives_remaining))}${"○".repeat(Math.max(0, f.lives_total - f.lives_remaining))}</span>` : "";
     const shown = f.name || "？";

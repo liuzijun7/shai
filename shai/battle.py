@@ -962,7 +962,7 @@ class Battle(Rules, Actions, TurnStart, Forms):
             "learned": sorted(n for n in f.learn_progress if f.learned_level(n) > int(f.inner.get(n, 0))),  # 玩家学来的
             "traits": sorted(self.traits(f)),
             "statuses": {n: {"turns": s.turns, "layer": s.layer} for n, s in f.statuses.items()},
-            "parasites": {n: {"count": p.count, "layer": p.layer} for n, p in f.parasites.items()},
+            "parasites": {n: {"count": p.count, "layer": p.layer, "age": p.age} for n, p in f.parasites.items()},
             "resources": dict(f.resources), "radiation": f.radiation, "defeated": f.defeated,
             "used_shen": sorted(f.used_shen), "is_true_body": f.is_true_body, "entered": f.entered,
             "learn_progress": dict(f.learn_progress), "devices": dict(f.devices),
