@@ -106,7 +106,7 @@ def inner_text(name: str, level: int) -> str:
     if name == "蛮力":
         return f"自己的基础伤害加 {percent(value)}"
     if name == "铁布衫":
-        return f"受到的基础伤害只算 {percent(value)}"
+        return f"受到的基础伤害减少 {percent(value)}"
     if name == "弹性形变":
         return f"挨打时把受到伤害的 {percent(value)} 弹回给对手"
     if name == "生机勃勃":
@@ -161,7 +161,7 @@ SKILL_TEXT: dict[str, list[str]] = {
            "八分之一的可能是臭伽马：对手强制昏睡 10 回合。", "对手无敌时无效。"],
     "29": ["对手过两个回合以后昏睡 5 回合。", "对手身上有烧伤或点燃时，先扣体力上限的一半。"],
     "36": ["清掉自己身上所有不良状态和虫子，体力回满。", "这一回合无敌。"],
-    "37": ["用掉 1 个万灵丹：清掉自己身上所有不良状态和虫子。"],
+    "37": ["清掉自己身上所有不良状态和虫子。", "不用收集，直接用。"],
     "38": ["只能在外太空和宇宙边缘收集。在宇宙边缘一次得两个。"],
     "39": ["只能在宇宙、外太空和宇宙边缘收集。在宇宙边缘一次得两个。"],
     "t1": ["打两下。打掉多少体力，自己就加多少。", "加到超过上限就多一条命。"],
@@ -177,7 +177,6 @@ SKILL_TEXT: dict[str, list[str]] = {
     "c_pharaoh_build": ["造一下金字塔。每造满 5 下，自己所有内功升一级。"],
     "c_ouyang_collect": ["收集 1 个酒。"],
     "c_ouyang_drink": ["喝掉 1 个酒：这一回合无敌。", "下一回合自己的伤害和特效回合数加倍。"],
-    "sys_collect_panacea": ["收集 1 个万灵丹，留着以后用。"],
     "sys_collect_glue": ["马上生效：5 回合内自己的场景不会被改变，自己也动不了。", "身上有烧伤或点燃时粘不住。"],
     "sys_collect_oxygen": ["只能在地面这一层收集。在雨林一次得两个。",
                            "在宇宙和更高的地方每回合用掉 1 个氧气；没有氧气每回合掉体力上限的 10%。"],
@@ -211,7 +210,7 @@ USER_NOTES: dict[str, list[str]] = {
     "11": ["肥龙王用：威力 8 万。"],
     "15": ["生化大师、猪带小天王用：虫子每多待一回合，多吸 10%。"],
     "19": ["肥饕餮用：吸 100%。"],
-    "24": ["达伽马用：不用花东西。"],
+    "24": ["达伽马用：不用花东西，不限次数，用完也不封喉。"],
     "28": ["生化大师、猪带小天王用：不点燃，改成一半的可能直接打掉对手这条命。"],
     "29": ["生化大师、猪带小天王用：对手直接昏睡 5 回合。"],
     "x24": ["龙王用的是他自己的台风：威力 5 万，清空对手的物品。"],
@@ -251,8 +250,8 @@ def skill_lines(spec: dict[str, Any]) -> list[Line]:
     flags = []
     if skill_id in FIRST_STRIKE_IDS:
         flags.append("先手")
-    if skill_id in SURE_HIT_IDS or (shen and hits_foe):
-        flags.append("必中")
+    if skill_id in SURE_HIT_IDS or (shen and hits_foe) or (spec.get("character") and hits_foe):
+        flags.append("必中")                              # 人物的专属招是他的大招，大招都必中
     if flags:
         lines.append(("flag", "　".join(flags)))
 
@@ -298,6 +297,9 @@ def skill_lines(spec: dict[str, Any]) -> list[Line]:
     if "特技" in attributes and spec["action_kind"] == "skill" and not spec.get("character"):
         lines.append(("text", "特技用完，自己封喉 3 回合；自己的大招不算。"))
     lines += [("note", text) for text in USER_NOTES.get(skill_id, [])]
+    owners = [name for name, names in SIGNATURE_SKILL_NAMES.items() if spec["name"] in names]
+    if owners and not spec.get("character") and hits_foe and "必中" not in flags:
+        lines.append(("note", f"是{'、'.join(owners)}的大招：他{'们' if len(owners) > 1 else ''}用的时候必中。"))
     return lines
 
 
@@ -316,7 +318,7 @@ def skill_card(spec: dict[str, Any]) -> dict[str, Any]:
 
 def all_skill_specs() -> list[dict[str, Any]]:
     """图鉴里列的招：按技能、神技、防御、物品、专属排。做了但不显示的、还没做完的不列。"""
-    skip = set(HIDDEN_SKILL_IDS) | set(NOT_YET_IMPLEMENTED_SKILLS) | {"25"}
+    skip = set(HIDDEN_SKILL_IDS) | set(NOT_YET_IMPLEMENTED_SKILLS) | {"25", "sys_collect_panacea"}
     specs = [spec for key, spec in SKILLS.items() if key not in skip] + [_OXYGEN_CARD]
     order = ["技能", "神技", "防御", "物品", "专属"]
     return sorted(specs, key=lambda spec: order.index(skill_kind(spec)))       # sorted 是稳定的，同一类里保持原来的顺序
@@ -364,7 +366,7 @@ SOUL_EXTRA: dict[str, list[str]] = {
     "范仲淹": ["每造满 5 下岳阳楼，自己所有内功升一级。"],
     "埃及法老": ["每造满 5 下金字塔，自己所有内功升一级。"],
     "欧阳修": ["喝酒：这一回合无敌，下一回合伤害和特效回合数加倍。"],
-    "达伽马": ["伽马射线不用花星体能量和超新星。"],
+    "达伽马": ["伽马射线不用花星体能量和超新星，不限次数。"],
     "超级真身": ["自己的人物全部倒下以后出场。"],
 }
 
@@ -418,8 +420,9 @@ def character_lines(data: dict[str, Any]) -> list[Line]:
     if name in LEARN_MULTIPLIER:
         lines.append(("text", f"学内功一下算 {LEARN_MULTIPLIER[name]} 下。"))
     big = sorted(SIGNATURE_SKILL_NAMES.get(name, ())) + [n for n in own if n not in SIGNATURE_SKILL_NAMES.get(name, ())]
-    if name in UNBLOCKABLE_CHARACTERS and big:
-        lines.append(("text", f"他的大招（{'、'.join(big)}）不会被先手的封招憋回去。"))
+    if big:
+        more = "，也不会被先手的封招憋回去" if name in UNBLOCKABLE_CHARACTERS else ""
+        lines.append(("text", f"他的大招（{'、'.join(big)}）必中{more}。"))
     lines += [("text", text) for text in SOUL_EXTRA.get(name, [])]
     lines += [("text", text) for text in _form_lines(name)]
     return lines

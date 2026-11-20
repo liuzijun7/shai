@@ -141,8 +141,10 @@ _extra("x11", "布拉风", ["物理", "特技", "地理"], 10000, [("冰封", 3)
        description="对手冰封 3 回合：不能出打对手的招。")
 _extra("x12", "九十二三弑", ["物理"], 9000, [("封神", 5)], 3, 0, effect="u92",
        description="一半的可能让对手昏睡 3 回合；累计辐射 1 次。")
+# 雨晨 2026-11-19：万灵丹不用收集，直接用。原来“对手手里的万灵丹全部失效”就没东西可废了，
+# 先做成“对手这条命里不能再用万灵丹”（我定的，等雨晨确认）。
 _extra("x13", "三聚氰胺", ["化学", "物品"], 0, [], 1, 0, effect="melamine",
-       description="对手手里的万灵丹全部失效。")
+       description="对手这条命里不能再用万灵丹。")
 
 # 心眼（雨晨）：魔法。5 回合内自己所有的招必中，对面的虚空神术躲不开。
 _extra("x14", "心眼", ["魔法"], 0, [("心眼", 5)], None, 0, effect="self_status", target="self",
@@ -278,6 +280,7 @@ SIGNATURE_SKILL_NAMES = {
     "生化大师": {"硫酸", "乙醚", "猪带绦虫", "昏睡绦虫", "蚂蟥"},
     "猪带小天王": {"硫酸", "乙醚", "猪带绦虫", "昏睡绦虫", "蚂蟥"},
     "灵力圣使": {"圣六式空凌"},
+    "达伽马": {"伽马射线"},              # 雨晨 2026-11-19：达伽马的伽马射线可以无限用（本子：可以任意放 γ 射线）
 }
 
 # 第一版可以选的人物。进化版要靠进化得到；赵先龙、三鲍太监在待办里。
@@ -311,7 +314,9 @@ def accelerator_level(builds: int) -> dict | None:
 
 
 COMMON_SKILL_IDS = _gd.COMMON_SKILL_IDS
-SYSTEM_ACTION_IDS = _gd.SYSTEM_ACTION_IDS + ("sys_build_accelerator", "sys_fire_accelerator")
+# 雨晨 2026-11-19：万灵丹不用收集，直接用。所以“收集万灵丹”不再列出来。
+SYSTEM_ACTION_IDS = tuple(key for key in _gd.SYSTEM_ACTION_IDS if key != "sys_collect_panacea") + (
+    "sys_build_accelerator", "sys_fire_accelerator")
 
 # 不出现在招式按钮里的专属动作：占卜和牛顿选场景都改成了回合开始时的免费选择。
 NOT_YET_IMPLEMENTED_SKILLS = {"t8", "c_newton_scene"}
@@ -326,5 +331,13 @@ def character_skill_ids(character_data: dict) -> tuple[str, ...]:
 
 
 def is_signature(character_name: str, spec: dict) -> bool:
-    """这个招是不是这个人物的大招。"""
-    return spec.get("character") == character_name or spec["name"] in SIGNATURE_SKILL_NAMES.get(character_name, ())
+    """这个招是不是这个人物的大招：他的专属招，或者在他手里改了数值的通用招。
+
+    进化形态用原形态的专属招也算（肥饕餮的饕餮牙）。
+    """
+    if spec["name"] in SIGNATURE_SKILL_NAMES.get(character_name, ()):
+        return True
+    if not spec.get("character"):
+        return False
+    own = CHARACTERS[CHARACTER_NAME_TO_ID[character_name]]["skills"] if character_name in CHARACTER_NAME_TO_ID else ()
+    return spec["character"] == character_name or spec["id"] in own

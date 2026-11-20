@@ -65,6 +65,77 @@ class NewMoves(unittest.TestCase):
         self.assertTrue(foe.has_status("封喉"))
         self.assertFalse(foe.has_status("封魔"))                          # 这一把贼输了
 
+    def test_laser_sent_back_by_the_mirror_lets_the_mirror_holder_pick(self):
+        # 激光被平面镜弹回来，落在出激光的人自己身上：由拿镜子的人选三个属性，和出激光的人贼。
+        # （以前这里变成“自己和自己贼”，对局会卡住。）
+        b = fight(a="欧阳修", b="武圣")                                    # 武圣没有盾牌：有盾牌的人封不住
+        b.choose("A", "dj")
+        b.choose("B", "x17")
+        for attribute in ("物理", "魔法", "特技"):
+            self.assertEqual(b.pending["kind"], "choose")
+            self.assertEqual(b.pending["askers"], ["A"])
+            b.answer(attribute)
+        for winner in ("A", "B", "A"):
+            self.assertEqual(b.pending["kind"], "zei")
+            self.assertEqual(sorted(b.pending["sides"]), ["A", "B"])
+            b.answer(winner)
+        shooter = b.fighter("B")
+        self.assertEqual(shooter.radiation, 1)
+        self.assertTrue(shooter.has_status("封物"))
+        self.assertTrue(shooter.has_status("封喉"))
+        self.assertFalse(shooter.has_status("封魔"))
+        self.assertFalse(b.fighter("A").statuses)
+
+    def test_laser_on_yourself_only_hurts(self):
+        b = fight(a="欧阳修", b="巫师")
+        b.choose("A", "x17", on_self=True)
+        b.choose("B", "d1")
+        self.assertIsNone(b.pending)                                      # 没有人和他贼：不封属性
+        me = b.fighter("A")
+        self.assertEqual(me.hp, 300000 - 10000)
+        self.assertEqual(me.radiation, 1)
+        self.assertFalse(any(name.startswith("封") for name in me.statuses))
+
+    def test_whole_field_sleep_hits_both_sides_for_the_same_single_round(self):
+        # 雨晨 2026-11-19 试玩时发现：昏沉大法发动，对面睡了两回合，自己晚一回合才睡。
+        # 应该是两边同一个回合一起睡，只睡这 1 回合。
+        b = fight(a="武圣", b="饕餮")
+        b.fighter("B").inner["昏沉大法"] = 3                               # 每 3 回合全场昏睡 1 回合
+        play(b, "d1", "d1")
+        play(b, "d1", "d1")
+        text = "\n".join(b.log)
+        self.assertIn("昏沉大法令全场昏睡。", text)
+        self.assertIn("第3回合：A的武圣选择【跳过行动】，B的饕餮选择【跳过行动】。", text)   # 这一回合两边都出不了招
+        self.assertEqual(b.round, 4)
+        self.assertFalse(b.fighter("A").has_status("昏睡"))
+        self.assertFalse(b.fighter("B").has_status("昏睡"))
+        self.assertEqual(sorted(b.waiting_for()), ["A", "B"])             # 第 4 回合两边都醒了
+
+    def test_the_page_is_told_when_parasites_go_away(self):
+        # 雨晨 2026-11-19 试玩：对面幸运发动把虫子清了，可是血条下面的虫子标签还在。原因是清虫子的时候没有通知网页。
+        b = fight(a="武圣", b="饕餮")
+        play(b, "17", "d1")                                               # 蚂蟥
+        self.assertIn("蚂蟥", b.fighter("B").parasites)
+        b.remove_parasite(b.fighter("B"), "蚂蟥", "清掉")
+        self.assertIn({"t": "parasite_end", "side": "B", "name": "蚂蟥"}, b.events)
+
+    def test_signature_moves_always_hit(self):
+        # 雨晨 2026-11-19：所有人物的大招都必中，虚空神术躲不开。
+        b = fight(a="灵力圣使", b="陶渊明")                                # 陶渊明有虚空神术 3 级
+        b.choose("A", "6")                                                # 圣六式空凌是灵力圣使的大招
+        b.choose("B", "d1")
+        self.assertIsNone(b.pending)                                      # 不用为“躲不躲得开”贼
+        self.assertEqual(b.fighter("B").hp, 150000 - 90000)
+        b = fight(a="饕餮", b="陶渊明")
+        b.choose("A", "t1")                                               # 饕餮牙是饕餮的专属招
+        b.choose("B", "d1")
+        self.assertIsNone(b.pending)
+        self.assertEqual(b.fighter("B").hp, 150000 - 80000)
+        b = fight(a="武圣", b="陶渊明")
+        b.choose("A", "6")                                                # 武圣用圣六式空凌不是大招：要贼
+        b.choose("B", "d1")
+        self.assertEqual(b.pending["kind"], "zei")
+
     def test_moving_light_wave_exists_but_is_not_offered(self):
         self.assertEqual(SKILLS["x18"]["name"], "动感光波")
         self.assertNotIn("x18", ids(fight(), "A"))

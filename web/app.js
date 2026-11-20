@@ -600,7 +600,7 @@ function cardHtml(a, q, first) {
   } else if (a.action_kind === "defense") {
     row1 = mvRow("防御", "挡同一类的招"); row2 = "";
   } else if (category(a) === "物品" && !a.damage) {      // 物品：写现在手里有几个
-    const res = a.effect === "panacea" ? "万灵丹" : a.action_kind === "collect" ? a.name.replace(/^收集/, "") : null;
+    const res = a.action_kind === "collect" ? a.name.replace(/^收集/, "") : null;
     const side = (inGame() && S.choose_for) || leftSide(), p = S.view.players[side], f = p.team[p.active] || {};
     row1 = res && f.resources && res in f.resources ? mvRow("现有", f.resources[res] + " 个") : mvRow("物品", a.action_kind === "build" ? "造一下" : "用一次");
     row2 = a.target === "enemy" ? mvRow("防御", defenseCell(a)) : "";

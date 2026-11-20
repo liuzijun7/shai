@@ -54,6 +54,8 @@ class Rules:
             return True
         if "必中" in self.traits(actor) or spec["id"] in SURE_HIT_IDS or "神技" in spec["attributes"]:
             return True
+        if is_signature(actor.name, spec):          # 雨晨 2026-11-19：所有人物的大招都必中
+            return True
         name, a, t = spec["name"], self.label(actor), self.label(target)
         why = None
         if actor.has_status("虚空") and not self._chance(
@@ -163,7 +165,8 @@ class Rules:
             amount = int(round(base * multiplier))
             iron = target.inner_level("铁布衫")
             if iron:
-                amount = int(round(amount * INNER_VALUES["铁布衫"][iron]))
+                # 雨晨 2026-11-19：级别越高挨得越少。表里的数是“少挨百分之几”（原来的引擎把它当成“只挨百分之几”，写反了）。
+                amount = int(round(amount * (1 - INNER_VALUES["铁布衫"][iron])))
             if "丝袜" in self.traits(target):
                 amount = min(amount, 30000)
             dealt = self.apply_basic_damage(actor, target, amount, spec["name"])
@@ -248,8 +251,13 @@ class Rules:
     # ---------- 状态和寄生虫 ----------
 
     def apply_status(self, target: Fighter, name: str, turns: int, source: str | None,
-                     force_body: bool = False, unremovable: bool = False, forced: bool = False) -> bool:
-        """加状态。``forced`` 为真时无视无敌、免疫和真空屏障（例如臭伽马的强制昏睡）。"""
+                     force_body: bool = False, unremovable: bool = False, forced: bool = False,
+                     counts_now: bool = False) -> bool:
+        """加状态。``forced`` 为真时无视无敌、免疫和真空屏障（例如臭伽马的强制昏睡）。
+
+        ``counts_now``：加上的这一回合就算一回合。回合开始时加的状态用这个（昏沉大法、南极、乙醚到点），
+        不然“昏睡 1 回合”会变成这回合睡、下回合还睡。
+        """
         if turns <= 0 or target.defeated:
             return False
         harmful = name not in SELF_BUFFS and name != "无敌"
@@ -280,7 +288,8 @@ class Rules:
             self._log(f"{self.label(target)}的{name}保持{existing.turns}回合。")
             return False
         # 真火写的是“烧几回合”，就烧几次：加上的这一回合也算一回合。别的状态照引擎的老规矩，加上的这一回合不算。
-        target.statuses[name] = Status(name, turns, source, layer, unremovable or forced, fresh=name != "真火")
+        target.statuses[name] = Status(name, turns, source, layer, unremovable or forced,
+                                       fresh=name != "真火" and not counts_now)
         self._emit("status", side=target.side, name=name, turns=turns, good=not harmful)
         self._log(f"{self.label(target)}获得{name}（{turns}回合）。")
         if name in {"烧伤", "点燃"} and target.has_status("万能胶"):
@@ -346,6 +355,7 @@ class Rules:
                     self._log(f"{self.label(fighter)}身上的华支睾吸虫靠{inner}活了下来。")
                     return False
         fighter.parasites.pop(name, None)
+        self._emit("parasite_end", side=fighter.side, name=name)        # 告诉网页：这种虫子没了，标签可以去掉
         self._log(f"{self.label(fighter)}身上的{name}被{why}了。")
         return True
 
@@ -356,6 +366,7 @@ class Rules:
         for name, parasite in list(fighter.parasites.items()):
             if parasite.layer == "shield":
                 fighter.parasites.pop(name, None)
+                self._emit("parasite_end", side=fighter.side, name=name)
         self._log(f"{self.label(fighter)}的盾牌破碎，盾牌上的效果消失。")
 
     def duration(self, actor: Fighter, spec: dict[str, Any], turns: int) -> int:
@@ -431,8 +442,12 @@ class Rules:
 
     # ---------- 回合开始 ----------
 
-    def start_of_turn(self, actor: Fighter, target: Fighter | None) -> bool:
-        """处理一个人物的回合开始。返回 True 表示他这回合不能出招。"""
+    def start_of_turn(self, actor: Fighter, target: Fighter | None) -> None:
+        """处理一个人物回合开始时的各种效果。他这回合能不能出招，等两边都处理完以后用 ``cannot_act`` 看。
+
+        分成两步是因为这里的效果会落到对面身上（昏沉大法让全场昏睡）：
+        要是处理完一个人就马上看他能不能出招，先处理的那个人会漏掉后一个人给他加的昏睡。
+        """
         actor.counters["personal_turns"] = int(actor.counters.get("personal_turns", 0)) + 1
         actor.counters["field_turns"] = int(actor.counters.get("field_turns", 0)) + 1    # 这次上场以后的第几回合
         if actor.counters.pop("wine_invincible_until_next_turn", False):
@@ -445,7 +460,7 @@ class Rules:
         for item in actor.counters.get("delayed_effects", []):
             item["remaining"] -= 1
             if item["remaining"] <= 0:
-                self.apply_status(actor, item["status"], item["turns"], item.get("source"))
+                self.apply_status(actor, item["status"], item["turns"], item.get("source"), counts_now=True)
             else:
                 remaining.append(item)
         actor.counters["delayed_effects"] = remaining
@@ -458,6 +473,8 @@ class Rules:
             for name in bad:
                 actor.statuses.pop(name, None)
                 self._emit("status_end", side=actor.side, name=name)
+            for name in list(actor.parasites):
+                self._emit("parasite_end", side=actor.side, name=name)
             actor.parasites.clear()
             self._log(f"{self.label(actor)}发动幸运，解除不良状态和寄生虫。")
 
@@ -470,17 +487,20 @@ class Rules:
             self.move_vertical(actor, -1, f"有内功重于泰山{level}级，自己往下沉一层")
         level = actor.inner_level("昏沉大法")
         if level and turns % int(INNER_VALUES["昏沉大法"][level]) == 0:
-            self.apply_status(actor, "昏睡", 1, actor.side, force_body=True)
+            self.apply_status(actor, "昏睡", 1, actor.side, force_body=True, counts_now=True)
             if target is not None:
-                self.apply_status(target, "昏睡", 1, actor.side)
+                self.apply_status(target, "昏睡", 1, actor.side, counts_now=True)
             self._log("昏沉大法令全场昏睡。")
         level = actor.inner_level("放射性")
         if level and target is not None:
             self.add_radiation(target, int(INNER_VALUES["放射性"][level]), actor.side, "放射性")
 
         if actor.scene == "南极" and turns % 3 == 0:
-            self.apply_status(actor, "昏睡", 1, None, force_body=True)
+            self.apply_status(actor, "昏睡", 1, None, force_body=True, counts_now=True)
             self._log(f"{self.label(actor)}受到南极寒冷影响，本回合昏睡。")
+
+    def cannot_act(self, actor: Fighter) -> bool:
+        """这个人物这回合是不是不能出招（昏睡或者封印）。"""
         for why in ("昏睡", "封印"):
             if actor.has_status(why):
                 self._emit("skip", side=actor.side, why=why)
@@ -566,6 +586,7 @@ class Rules:
                     ratio += 0.10 * max(0, parasite.age - 1)
                 amount = int(actor.max_hp * ratio * parasite.count)
                 if parasite.age % 5 == 0:
+                    self._emit("parasite", side=actor.side, name=parasite.name, count=parasite.count)   # 多出来的条数
                     parasite.count *= 2
                     self._log(f"{self.label(actor)}的猪带绦虫繁殖为{parasite.count}条。")
             elif parasite.name == "蚂蟥":

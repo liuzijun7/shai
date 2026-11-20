@@ -76,8 +76,7 @@ class Actions:
             self._log(f"{L(actor)}造粒子加速器，造了{built}下。"
                       + ("已经可以打了。" if accelerator_level(built) else ""))
             return
-        if effect == "panacea":
-            actor.resources["万灵丹"] -= 1
+        if effect == "panacea":                         # 雨晨：万灵丹不用收集，直接用
             self.cleanse(actor)
             self._log(f"{L(actor)}清除了不良状态和寄生虫。")
             return
@@ -318,9 +317,8 @@ class Actions:
             if not target.defeated:
                 self.add_radiation(target, 1, actor.side, "九十二三弑")
         elif effect == "melamine":
-            if target.resources["万灵丹"]:
-                target.resources["万灵丹"] = 0
-                self._log(f"{L(target)}的万灵丹全部失效。")
+            target.counters["panacea_spoiled"] = True     # 换一条命就好了（counters 在丢命时清空）
+            self._log(f"{L(target)}的万灵丹失效了：这条命里不能再用。")
         elif effect == "typhoon":
             for key in target.resources:
                 if key != "氧气":
@@ -331,19 +329,33 @@ class Actions:
 
 
     def laser_seals(self, actor: Fighter, target: Fighter) -> None:
-        """激光（雨晨）：出激光的人选三个要封的属性，每个和对手贼一次，赢了那个属性封 3 回合。"""
+        """激光（雨晨）：出激光的人选三个要封的属性，每个和对手贼一次，赢了那个属性封 3 回合。
+
+        激光落在出招的人自己身上的两种情况（我定的，还没问雨晨）：
+        - 被平面镜弹回来：由拿镜子的人选三个属性，和出激光的人贼，赢了封的是出激光的人；
+        - 自己对自己用：只算伤害和辐射，不封属性（没有人和他贼）。
+        """
         L, picked = self.label, []
+        chooser = actor
+        if actor is target:
+            mirror = getattr(self, "_reflected_by", None)
+            if mirror is None:
+                self._log(f"{L(actor)}的激光打在自己身上：只算伤害和辐射，不封属性。")
+                return
+            chooser = self.fighter(mirror)
+            if chooser.defeated:
+                return
         for index in range(1, 4):
             options = [{"id": a, "name": "封" + a} for a in SEAL_BY_ATTRIBUTE if a not in picked]
             picked.append(self._decide(
-                "choose", side=actor.side, options=options,
-                reason=f"{L(actor)}的激光：选第{index}个要封的属性（一共选 3 个，每个贼一次，赢了封 3 回合）")["value"])
+                "choose", side=chooser.side, options=options,
+                reason=f"{L(actor)}的激光：{L(chooser) + '来' if chooser is not actor else ''}选第{index}个要封的属性（一共选 3 个，每个贼一次，赢了封 3 回合）")["value"])
         self._log(f"{L(actor)}的激光要封：{'、'.join(picked)}。")
         for attribute in picked:
             if target.defeated:
                 break
-            won = self._zei(actor.side, target.side, "decisive", f"{L(actor)}的激光封不封得住{attribute}",
-                            {actor.side: f"{attribute}被封 3 回合", target.side: f"{attribute}没封上"}) == actor.side
+            won = self._zei(chooser.side, target.side, "decisive", f"{L(actor)}的激光封不封得住{attribute}",
+                            {chooser.side: f"{attribute}被封 3 回合", target.side: f"{attribute}没封上"}) == chooser.side
             if won:
                 self.apply_status(target, SEAL_BY_ATTRIBUTE[attribute], 3, actor.side)
 

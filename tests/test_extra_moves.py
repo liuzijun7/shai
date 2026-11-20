@@ -131,11 +131,27 @@ class ExtraMoves(unittest.TestCase):
         play(b, "23", "d1")
         self.assertEqual(b.fighter("B").hp, 100000 - 40000)
 
-    def test_melamine_spoils_panacea(self):
+    def test_panacea_needs_no_collecting_and_melamine_spoils_it(self):
+        # 雨晨 2026-11-19：万灵丹不用收集，直接用。三聚氰胺让对手这条命里不能再用（这一条是我定的）。
         b = fight()
-        b.fighter("B").resources["万灵丹"] = 3
+        actions = {a["id"]: a for a in b.legal_actions("B")}
+        self.assertTrue(actions["37"]["legal"])
+        self.assertNotIn("sys_collect_panacea", actions)
         play(b, "x13", "d2")
-        self.assertEqual(b.fighter("B").resources["万灵丹"], 0)
+        blocked = {a["id"]: a for a in b.legal_actions("B")}["37"]
+        self.assertFalse(blocked["legal"])
+        self.assertIn("三聚氰胺", blocked["reason"])
+
+    def test_da_gama_fires_gamma_rays_without_limit(self):
+        # 雨晨 2026-11-19：达伽马的伽马射线可以无限用。不用花东西，不算“每条命一次”，用完也不给自己封喉。
+        b = fight(a="达伽马", b="武圣")                                    # 武圣 2 条命
+        b.choose("A", "24")
+        b.choose("B", "d1")
+        if b.pending:
+            b.answer("B")                                                 # 臭伽马没出
+        self.assertEqual(b.fighter("B").lives_remaining, 1)
+        self.assertFalse(b.fighter("A").has_status("封喉"))
+        self.assertTrue(legal(b, "A")["24"]["legal"])                     # 马上还能再放
 
     def test_every_extra_move_has_a_description_or_plain_effect(self):
         for key, spec in SKILLS.items():

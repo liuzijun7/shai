@@ -152,6 +152,15 @@ class OrderAndZei(unittest.TestCase):
         self.assertEqual(b.fighter("B").hp, 150000 - 15000)   # 蛮力 3：加 50%
         self.assertEqual(b.fighter("A").hp, 100000 - 5000)    # 铁布衫 3：只受一半
 
+    def test_iron_shirt_blocks_more_at_higher_levels(self):
+        # 雨晨 2026-11-19：铁布衫级别越高挨得越少。1 到 4 级分别少挨 20%、30%、50%、70%。
+        for level, taken in ((1, 8000), (2, 7000), (3, 5000), (4, 3000)):
+            b = Battle(["武圣"], ["饕餮"], seed=1, true_body=False)
+            b.fighter("B").inner["铁布衫"] = level
+            b.choose("A", "0")
+            b.choose("B", "d1")
+            self.assertEqual(b.fighter("B").hp, 150000 - taken, f"铁布衫 {level} 级")
+
     def test_zei_decides_order_and_sealed_move_is_cancelled(self):
         b = Battle(["拳术宗师"], ["饕餮"], seed=1, true_body=False)
         b.choose("A", "4")          # 摄魂大法：封魔

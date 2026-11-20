@@ -522,11 +522,13 @@ class Battle(Rules, Actions, TurnStart, Forms):
     def _start_phase(self) -> None:
         self.choices, self.skipping, self.control = {}, set(), {}
         self._link_lenders()
-        for side in SIDES:
+        for side in SIDES:                      # 先把两边回合开始的效果都处理完
             actor, target = self.fighter(side), self.fighter(self.other(side))
-            if actor.defeated:
-                continue
-            if self.start_of_turn(actor, None if target.defeated else target):
+            if not actor.defeated:
+                self.start_of_turn(actor, None if target.defeated else target)
+        for side in SIDES:                      # 再看谁这回合不能出招
+            actor = self.fighter(side)
+            if not actor.defeated and self.cannot_act(actor):
                 self.skipping.add(side)
                 self.choices[side] = {"spec": dict(_SKIP), "destination": None, "lives": actor.lives_remaining}
         self._replace_fallen()
@@ -645,7 +647,12 @@ class Battle(Rules, Actions, TurnStart, Forms):
             else:
                 self._emit("move", **self._move_data(actor, target, spec))
             self._log(f"{self.label(actor)}使用【{spec['name']}】。")
-            self.resolve_action(actor, target, spec, entries[side]["destination"])
+            # 被平面镜弹回来的招落在出招的人自己身上。记下是谁拿的镜子：激光要靠这个知道由谁来选要封的属性。
+            self._reflected_by = self.other(side) if side in reflected else None
+            try:
+                self.resolve_action(actor, target, spec, entries[side]["destination"])
+            finally:
+                self._reflected_by = None
             for key, amount in actor.resources.items():          # 丢了一条命以后东西清零了，照样出的招不能把数量扣成负的
                 actor.resources[key] = max(0, amount)
         self.rng = self._main_rng
@@ -752,8 +759,9 @@ class Battle(Rules, Actions, TurnStart, Forms):
         return spec["target"] == "enemy" or spec["effect"] == "self_status_and_damage"
 
     def _shen_unlimited(self, actor: Fighter, spec: dict[str, Any]) -> bool:
-        """这个神技不受“每条命一次”的限制：巫师；通天神树本身；神树长满了的玩家。"""
+        """这个神技不受“每条命一次”的限制：巫师；通天神树本身；神树长满了的玩家；达伽马的伽马射线。"""
         return (actor.name == "巫师" or spec["effect"] == "grow_tree"
+                or (actor.name == "达伽马" and spec["effect"] == "gamma")
                 or self.players[actor.side].tree >= TREE_GROWTHS)
 
     def _big_bang(self, side: str, spec: dict[str, Any], defended_by: str | None) -> None:
@@ -892,8 +900,8 @@ class Battle(Rules, Actions, TurnStart, Forms):
             return "粒子加速器还没造好（要造 10 下）"
         if effect == "planet" and (actor.resources["超新星"] < 1 or actor.resources["星体能量"] < 3):
             return "需要1超新星和3星体能量"
-        if effect == "panacea" and actor.resources["万灵丹"] < 1:
-            return "没有万灵丹"
+        if effect == "panacea" and actor.counters.get("panacea_spoiled"):
+            return "万灵丹被三聚氰胺弄失效了，这条命里不能再用"
         if effect == "collect_supernova" and not SCENES[actor.scene].get("collect_supernova"):
             return "当前场景不能收集超新星"
         if effect == "collect_star" and not SCENES[actor.scene].get("collect_star"):
