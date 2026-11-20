@@ -31,10 +31,14 @@ REPLAY_DIR = os.environ.get("SHAI_REPLAY_DIR") or os.path.join(ROOT, "replays")
 REPLAY_ID = re.compile(r"^[0-9A-Za-z_-]{1,60}$")
 REPLAY_LIST_MAX = 50
 IDLE_ROOM_SECONDS = 3 * 3600        # 没有人连着的房间过这么久就清掉
+# 没打完的对局存在这里，一个房间一个文件。服务器重启、或者房间因为太久没人被清掉以后，输入原来的房间号还能接着打。
+SAVE_DIR = os.environ.get("SHAI_SAVE_DIR") or os.path.join(ROOT, "saves")
+SAVE_KEEP_SECONDS = 30 * 24 * 3600  # 存盘放这么久没人动就删掉
 
 rooms: dict[str, Room] = {}
 sockets: dict[str, dict[str, WebSocket]] = {}       # 房间号 -> {身份 -> 连接}
 last_active: dict[str, float] = {}
+saved_marks: dict[str, tuple[int, int]] = {}        # 房间号 -> 上次存盘时（走了几步，聊了几条）：没变化就不重写文件
 
 
 def _art_names() -> list[str]:
@@ -91,8 +95,83 @@ def _scene_list() -> list[dict[str, Any]]:
 def _new_code() -> str:
     while True:
         code = f"{random.randint(0, 9999):04d}"
-        if code not in rooms:
+        if code not in rooms and not os.path.isfile(_save_path(code)):
             return code
+
+
+# ---------- 没打完的对局的存盘 ----------
+
+def _save_path(code: str) -> str:
+    return os.path.join(SAVE_DIR, code.encode("utf-8").hex() + ".json")     # 房间号可以是任何字，文件名用它的十六进制
+
+
+def _store_room(room: Room) -> None:
+    """对战中的房间，每次有变化就存一次；打完了或者回到选人物，就把存盘删掉。存不了不能影响对战。"""
+    path = _save_path(room.code)
+    try:
+        data = room.snapshot()
+        if data is None:
+            if saved_marks.pop(room.code, None) is not None or os.path.isfile(path):
+                os.remove(path)
+            return
+        mark = (len(data["history"]), data["chat_count"])
+        if saved_marks.get(room.code) == mark:
+            return
+        os.makedirs(SAVE_DIR, exist_ok=True)
+        with open(path + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        os.replace(path + ".tmp", path)                 # 先写到旁边再换过去：写到一半断电也不会留下半个文件
+        saved_marks[room.code] = mark
+    except Exception:
+        traceback.print_exc()
+
+
+def _load_room(code: str) -> Room | None:
+    """房间不在内存里的时候，看看有没有它的存盘。读不回来（规则改过了）就把文件改名留着，返回 None。"""
+    path = _save_path(code)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        if data.get("room") != code:
+            return None
+        room = Room.restore(data)
+        saved_marks[code] = (len(data["history"]), room.chat_count - 1)     # 多了一条“从存盘接着打”的提示
+        return room
+    except Exception:
+        traceback.print_exc()
+        try:
+            os.replace(path, path + ".bad")
+        except OSError:
+            pass
+        return None
+
+
+def _open_room(code: str) -> Room:
+    room = rooms.get(code)
+    if room is None:
+        had_save = os.path.isfile(_save_path(code))
+        room = _load_room(code)
+        if room is None:
+            room = Room(code)
+            if had_save:
+                room._say("sys", "", "这个房间存着的那一局是用旧规则打的，没法接着打了，只能重新开一局。")
+        rooms[code] = room
+    return room
+
+
+def _prune_saves() -> None:
+    if not os.path.isdir(SAVE_DIR):
+        return
+    now = time.time()
+    for name in os.listdir(SAVE_DIR):
+        path = os.path.join(SAVE_DIR, name)
+        try:
+            if now - os.path.getmtime(path) > SAVE_KEEP_SECONDS:
+                os.remove(path)
+        except OSError:
+            pass
 
 
 # ---------- 战报和回放文件 ----------
@@ -151,6 +230,7 @@ def _replay_path(replay_id: str, extension: str) -> str:
 
 async def _broadcast(room: Room) -> None:
     _save_if_finished(room)
+    _store_room(room)
     for key, socket in list(sockets.get(room.code, {}).items()):
         try:
             await socket.send_json(room.state_for(key))
@@ -190,6 +270,7 @@ async def _ticker() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    _prune_saves()
     task = asyncio.create_task(_ticker())
     yield
     task.cancel()
@@ -248,7 +329,7 @@ async def websocket_endpoint(socket: WebSocket) -> None:
             try:
                 if message.get("t") == "join":
                     code = str(message.get("room") or "").strip()[:8] or _new_code()
-                    target = rooms.setdefault(code, Room(code))
+                    target = _open_room(code)
                     new_key, token = target.join(str(message.get("name") or ""), message.get("token"),
                                                  watch=bool(message.get("watch")))
                     if room is not None and key is not None:

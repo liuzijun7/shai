@@ -10,7 +10,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from server.rooms import CHOOSE_SECONDS, ZEI_SECONDS, Room, RoomError  # noqa: E402
+from server.rooms import CHOOSE_SECONDS, TEAM_SECONDS, ZEI_SECONDS, Room, RoomError  # noqa: E402
 from shai.replay import rebuild  # noqa: E402
 
 
@@ -33,6 +33,90 @@ def room_with(team_a, team_b, zei=True, timers=True):
     room.handle("A", {"t": "team", "names": team_a})
     room.handle("B", {"t": "team", "names": team_b})
     return room, clock
+
+
+class PickingCharactersHasATimeLimit(unittest.TestCase):
+    """雨晨 2026-11-20：选人物限时 60 秒，两个人都进了房间才开始；超时没选满的随机补齐。"""
+
+    def lobby(self, size=3):
+        clock = Clock()
+        room = Room("1234", rng=random.Random(1), clock=clock)
+        room.join("甲")
+        room.drive()
+        return room, clock
+
+    def test_no_clock_while_waiting_alone(self):
+        room, clock = self.lobby()
+        self.assertEqual(room.state_for("A")["timers"], {"A": None, "B": None})
+        clock.now += TEAM_SECONDS * 5
+        self.assertFalse(room.tick())
+        self.assertEqual(room.phase, "lobby")
+
+    def test_clock_starts_when_the_second_player_comes_in(self):
+        room, clock = self.lobby()
+        clock.now += 500
+        room.join("乙")
+        room.drive()
+        self.assertEqual(room.state_for("B")["timers"], {"A": TEAM_SECONDS, "B": TEAM_SECONDS})
+        self.assertEqual(room.state_for("A")["settings"]["team_seconds"], TEAM_SECONDS)
+
+    def test_timeout_keeps_what_was_picked_and_fills_the_rest_at_random(self):
+        room, clock = self.lobby()
+        room.join("乙")
+        room.handle("A", {"t": "draft", "names": ["饕餮", "龙王"]})
+        room.handle("B", {"t": "team", "names": ["巫师", "武圣", "陶渊明"]})
+        self.assertEqual(room.state_for("A")["my_draft"], ["饕餮", "龙王"])
+        self.assertEqual(room.state_for("A")["timers"]["B"], None)      # 乙已经选好了，不再计时
+        clock.now += TEAM_SECONDS - 1
+        self.assertFalse(room.tick())
+        clock.now += 2
+        self.assertTrue(room.tick())
+        self.assertEqual(room.phase, "battle")
+        team = room.seats["A"].team
+        self.assertEqual(team[:2], ["饕餮", "龙王"])                      # 点了的保留，顺序不变，第一个先上场
+        self.assertEqual(len(set(team)), 3)
+        self.assertEqual(room.state_for("A")["view"]["players"]["A"]["team"][0]["name"], "饕餮")
+        self.assertTrue(any("选人物超时" in line["text"] for line in room.chat))
+
+    def test_nothing_picked_means_a_fully_random_team(self):
+        room, clock = self.lobby()
+        room.join("乙")
+        room.drive()
+        clock.now += TEAM_SECONDS + 1
+        self.assertTrue(room.tick())
+        self.assertEqual(room.phase, "battle")
+        for side in ("A", "B"):
+            self.assertEqual(len(room.seats[side].team), 3)
+
+    def test_changing_the_team_size_restarts_the_clock_and_drops_the_picks(self):
+        room, clock = self.lobby()
+        room.join("乙")
+        room.handle("A", {"t": "draft", "names": ["饕餮"]})
+        clock.now += 50
+        room.handle("A", {"t": "config", "team_size": 2})
+        self.assertEqual(room.state_for("A")["timers"], {"A": TEAM_SECONDS, "B": TEAM_SECONDS})
+        self.assertIsNone(room.state_for("A")["my_draft"])
+        clock.now += 20
+        self.assertFalse(room.tick())                                   # 从改设置起才 20 秒
+
+    def test_no_time_limit_when_timers_are_off_and_bad_drafts_are_refused(self):
+        room, clock = self.lobby()
+        room.join("乙")
+        room.handle("A", {"t": "config", "timers": False})
+        clock.now += TEAM_SECONDS * 3
+        self.assertFalse(room.tick())
+        self.assertEqual(room.phase, "lobby")
+        for names in (["饕餮", "饕餮"], ["没有这个人"], ["饕餮", "龙王", "巫师", "武圣"]):
+            with self.assertRaises(RoomError):
+                room.handle("A", {"t": "draft", "names": names})
+
+    def test_computer_opponent_also_starts_the_clock(self):
+        room, clock = self.lobby()
+        room.handle("A", {"t": "bot"})
+        self.assertEqual(room.state_for("A")["timers"], {"A": TEAM_SECONDS, "B": None})
+        clock.now += TEAM_SECONDS + 1
+        self.assertTrue(room.tick())
+        self.assertEqual(room.phase, "battle")
 
 
 class Watching(unittest.TestCase):
@@ -159,12 +243,18 @@ class TimersWhenNobodyIsThere(unittest.TestCase):
         clock.now += 10 * CHOOSE_SECONDS
         self.assertFalse(room.tick())
         self.assertEqual(room.battle.round, 1)
-        room.join("甲", token)                                    # 回来的人重新计时，不会一回来就被判超时
+        other = room.seats["B"].token
+        room.join("甲", token)                                    # 只回来一个：这一局还停着，不替没回来的人出招
         room.drive()
-        self.assertEqual(room.state_for("A")["timers"]["A"], float(CHOOSE_SECONDS))
-        self.assertTrue(room.tick())                              # 乙还没回来，他的时间早就到了
-        self.assertIn("乙选招超时，按【普通攻击】算。", [c["text"] for c in room.chat])
-        self.assertEqual(room.battle.round, 1)                    # 甲还没选，这一回合还没结算
+        self.assertEqual(room.state_for("A")["timers"], {"A": None, "B": None})
+        clock.now += 10 * CHOOSE_SECONDS
+        self.assertFalse(room.tick())
+        room.join("乙", other)                                    # 都回来了：两个人的时间都从头算
+        room.drive()
+        self.assertEqual(room.state_for("A")["timers"], {"A": float(CHOOSE_SECONDS), "B": float(CHOOSE_SECONDS)})
+        clock.now += CHOOSE_SECONDS + 1
+        self.assertTrue(room.tick())
+        self.assertEqual(room.battle.round, 2)                    # 两边都超时，都按普通攻击算
 
 
 def bot_game(seed):

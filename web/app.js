@@ -52,7 +52,7 @@ let playing = false;
 let run = 0;              // 第几轮播放。换了一局以后，上一轮还没播完的动画不再往下播
 function resetPlayback() { stage = null; played = 0; playing = false; run++; }
 // aim：这一招打对手还是打自己。mode：操作区现在显示什么（战斗、物品、换人）。
-const ui = { picked: [], tab: "全部", mode: "moves", search: "", sceneAction: null, wanted: null, aim: "foe" };
+const ui = { picked: [], touched: false, tab: "全部", mode: "moves", search: "", sceneAction: null, wanted: null, aim: "foe" };
 const HAND_NAMES = ["石头", "剪刀", "布"];
 const HAND_GLYPH = { "石头": "✊", "剪刀": "✌", "布": "✋" };
 
@@ -370,6 +370,8 @@ function bindChat() {
 
 function renderLobby() {
   const host = me.side === "A", watch = !inGame(), size = S.settings.team_size, ready = !!S.my_team;
+  // 刷新页面以后，把服务器记着的“已经点了哪几个”拿回来（自己点过以后就以网页上的为准）。
+  if (!ready && !ui.touched && !ui.picked.length && S.my_draft && S.my_draft.length) ui.picked = S.my_draft.slice();
   const picked = ready ? S.my_team : (ui.picked = ui.picked.filter((n) => catalog.some((c) => c.name === n)).slice(0, size));
   const draft = $("#chattext") ? { text: $("#chattext").value, focus: document.activeElement === $("#chattext") } : null;
   const seat = (side) => {
@@ -380,7 +382,8 @@ function renderLobby() {
   const head = watch
     ? `<h2>你在观战</h2><span class="muted">两位玩家选好人物就开始。</span>`
     : `<h2>选 ${size} 个人物</h2><span class="muted">已选 ${picked.length} / ${size}。对手看不到你选了谁，第一个选的先上场。</span>
-        ${ready ? `<button id="unready">重新选</button>` : `<button class="primary" id="ready" ${picked.length === size ? "" : "disabled"}>选好了</button>`}`;
+        ${ready ? `<button id="unready">重新选</button>` : `<button class="primary" id="ready" ${picked.length === size ? "" : "disabled"}>选好了</button>`}
+        <span class="clock" id="clock"></span>`;
   $("#app").innerHTML = `
     <div class="panel">
       <div class="row"><h1>房间</h1><span class="code">${esc(S.room)}</span>${seat("A")}${seat("B")}
@@ -388,7 +391,7 @@ function renderLobby() {
       <div class="row">
         <label>每人带 <select id="size" ${host ? "" : "disabled"}>${Array.from({ length: S.settings.max_team }, (_, i) => `<option ${i + 1 === size ? "selected" : ""}>${i + 1}</option>`).join("")}</select> 个人物</label>
         <label><input type="checkbox" id="zei" ${S.settings.zei ? "checked" : ""} ${host ? "" : "disabled"}> 用贼（石头剪刀布）决定先后手和概率</label>
-        <label><input type="checkbox" id="timers" ${S.settings.timers ? "checked" : ""} ${host ? "" : "disabled"}> 限时（选招 ${S.settings.choose_seconds} 秒，贼 ${S.settings.zei_seconds} 秒）</label>
+        <label><input type="checkbox" id="timers" ${S.settings.timers ? "checked" : ""} ${host ? "" : "disabled"}> 限时（选人物 ${S.settings.team_seconds} 秒，选招 ${S.settings.choose_seconds} 秒，贼 ${S.settings.zei_seconds} 秒）</label>
         ${host && !S.seats.B ? `<button id="bot">加一个电脑对手</button>` : ""}
         ${host ? "" : `<span class="muted">设置由房主（A）决定</span>`}
       </div>
@@ -421,10 +424,13 @@ function renderLobby() {
     const card = ev.target.closest(".card"); if (!card || ready || watch) return;
     const name = card.dataset.name, i = ui.picked.indexOf(name);
     if (i >= 0) ui.picked.splice(i, 1); else if (ui.picked.length < size) ui.picked.push(name);
+    ui.touched = true;
+    send({ t: "draft", names: ui.picked });       // 服务器记着点了哪几个：选人物超时的时候，这几个保留，剩下的随机补齐
     renderLobby();
   };
   renderChat(); bindChat();
   if (draft) { $("#chattext").value = draft.text; if (draft.focus) $("#chattext").focus(); }
+  tickClock();
 }
 
 // ---------- 对战 ----------
@@ -555,6 +561,11 @@ function clockText() {
   if (!S || !S.timers || playing || replay) return "";
   const gone = (performance.now() - S.at) / 1000;
   const left = (side) => (S.timers[side] == null ? null : Math.max(0, Math.ceil(S.timers[side] - gone)));
+  if (inGame() && S.phase === "lobby") {        // 选人物的限时
+    const mine = left(me.side), theirs = left(me.side === "A" ? "B" : "A");
+    if (mine != null) return `选人物还剩 ${mine} 秒，时间到了没选满的随机补齐`;
+    return theirs != null ? `对手还在选，还剩 ${theirs} 秒` : "";
+  }
   if (inGame()) {
     const mine = left(me.side), theirs = left(rightSide());
     if (mine != null && ["choose", "throw", "redo", "pick"].includes(S.need)) return `你还剩 ${mine} 秒`;

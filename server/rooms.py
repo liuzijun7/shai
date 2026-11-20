@@ -25,6 +25,9 @@ MAX_WATCHERS = 20
 # 限时（雨晨：按默认）。选招 60 秒，超时算普通攻击；贼 15 秒，超时由电脑随机出。
 CHOOSE_SECONDS = 60
 ZEI_SECONDS = 15
+# 选人物也限时（雨晨 2026-11-20）：60 秒，两个人都进了房间才开始算；改了每人带几个人物就重新算。
+# 时间到了，已经点了的人物保留，没选满的随机补齐，按点的先后顺序上场。
+TEAM_SECONDS = 60
 # 轮到一个人之前，他的网页要先把刚发生的事播成动画。每条事件多给一点时间，封顶 20 秒。
 ANIMATION_SECONDS_PER_EVENT = 0.4
 ANIMATION_GRACE_MAX = 20
@@ -45,6 +48,7 @@ class Seat:
     token: str
     is_bot: bool = False
     team: list[str] | None = None       # 选好的队伍；对手看不到
+    draft: list[str] | None = None      # 还没点“选好了”时已经点了哪几个（超时的时候用）；对手也看不到
     auto_zei: bool = False              # 电脑替我随机出拳
     connected: bool = True
     events_sent: int = 0                # 已经发给这个人的事件条数
@@ -85,6 +89,8 @@ class Room:
     _start_view: dict[str, Any] | None = None
     _events_seen: dict[str, int] = field(default_factory=dict)
     _chat_at: dict[str, float] = field(default_factory=dict)
+    _lobby_round: int = 0                           # 选人物的限时要重新算的时候加一
+    _away: bool = False                             # 真人都离开过（或者服务器重启过）：等他们都回来才接着计时
 
     # ---------- 进房 ----------
 
@@ -96,6 +102,8 @@ class Room:
             if seat and token and seat.token == token:
                 seat.connected, seat.events_sent = True, 0
                 self.deadlines.pop(side, None)          # 回来的人重新计时
+                if self._away and all(s.connected for s in self.seats.values() if s and not s.is_bot):
+                    self._away, self.deadlines = False, {}      # 都回来了：每个人的时间从头算
                 return side, seat.token
         if token and token in self.watchers:
             self.watchers[token].events_sent = 0
@@ -118,6 +126,10 @@ class Room:
         seat = self.seats.get(key)
         if seat:
             seat.connected = False
+            if self.phase == "battle" and not any(s and not s.is_bot and s.connected for s in self.seats.values()):
+                # 真人都走了：这一局停在这里（存盘里有），等他们都回来再接着计时。
+                # 只走了一个、另一个还在的时候不停：走的人照样超时，免得留下的人干等。
+                self._away, self.deadlines = True, {}
 
     @property
     def phase(self) -> str:
@@ -157,9 +169,10 @@ class Room:
                 raise RoomError(f"每人带 1 到 {MAX_TEAM} 个人物。")
             if size != self.team_size:
                 self.team_size = size
+                self._lobby_round += 1                  # 选人物的限时重新算
                 for seat in self.seats.values():        # 人数变了，已选的队伍作废
                     if seat and not seat.is_bot:
-                        seat.team = None
+                        seat.team, seat.draft = None, None
         if "zei" in m:
             self.zei_enabled = bool(m["zei"])
         if "timers" in m:
@@ -185,7 +198,15 @@ class Room:
         for name in names:
             if name not in SELECTABLE_NAMES:
                 raise RoomError(f"不能选 {name}。")
-        self.seats[side].team = names
+        self.seats[side].team, self.seats[side].draft = names, list(names)
+
+    def _on_draft(self, side: str, m: dict[str, Any]) -> None:
+        """还没选满时，网页每点一下就把“现在点了哪几个”告诉服务器。超时的时候照这个补齐。"""
+        self._lobby_only()
+        names = list(m.get("names") or [])
+        if len(names) > self.team_size or len(set(names)) != len(names) or any(n not in SELECTABLE_NAMES for n in names):
+            raise RoomError("选的人物不对。")
+        self.seats[side].draft = names
 
     def _on_unready(self, side: str, m: dict[str, Any]) -> None:
         self._lobby_only()
@@ -243,9 +264,10 @@ class Room:
             raise RoomError("这一局还没打完。")
         self.battle, self.zei, self.throws, self.last_zei = None, None, {}, None
         self.finished, self.replay_id, self.deadlines, self._events_seen = None, None, {}, {}
+        self._lobby_round += 1
         for seat in self.seats.values():
             if seat:
-                seat.team, seat.events_sent = None, 0
+                seat.team, seat.draft, seat.events_sent = None, None, 0
         for watcher in self.watchers.values():
             watcher.events_sent = 0
         self._refresh_bot_team()
@@ -356,7 +378,13 @@ class Room:
     def _prompt_key(self, side: str) -> tuple[str, str] | None:
         """这个人现在要做什么。返回（哪一类，区分“这一次”的记号）；不用他做事就返回 None。"""
         seat = self.seats[side]
-        if self.phase != "battle" or seat is None or seat.is_bot:
+        if seat is None or seat.is_bot:
+            return None
+        if self.phase == "lobby":                       # 选人物：两个座位都有人了才计时
+            if seat.team is None and all(self.seats[s] is not None for s in SIDES):
+                return "team", f"{self._lobby_round}"
+            return None
+        if self.phase != "battle":
             return None
         battle = self.battle
         need, _ = self._need(side, battle.pending)
@@ -373,10 +401,10 @@ class Room:
 
     def _refresh_deadlines(self) -> None:
         """有人新轮到要做事，就给他开始计时；已经在计时的不重新算。"""
-        if self.phase != "battle" or not self.timers_enabled:
+        if self.phase == "over" or not self.timers_enabled or self._away:
             self.deadlines = {}
             return
-        now, events = self.clock(), self.battle.events
+        now, events = self.clock(), (self.battle.events if self.battle else [])
         for side in SIDES:
             key = self._prompt_key(side)
             if key is None:
@@ -384,6 +412,9 @@ class Room:
                 continue
             current = self.deadlines.get(side)
             if current and current["key"] == key:
+                continue
+            if key[0] == "team":
+                self.deadlines[side] = {"key": key, "at": now + TEAM_SECONDS, "limit": TEAM_SECONDS}
                 continue
             limit = CHOOSE_SECONDS if key[0] in {"choose", "pick"} else ZEI_SECONDS
             fresh = sum(1 for event in events[self._events_seen.get(side, 0):] if event["t"] != "log")
@@ -393,7 +424,7 @@ class Room:
 
     def tick(self) -> bool:
         """外面每秒叫一次。有人超时就替他做默认的事。局面有变化返回 True。"""
-        if self.phase != "battle" or not self.timers_enabled:
+        if self.phase == "over" or not self.timers_enabled or self._away:
             return False
         if not any(seat and not seat.is_bot and seat.connected for seat in self.seats.values()):
             return False                                # 真人都不在：不替人出招，等有人回来
@@ -411,7 +442,13 @@ class Room:
 
     def _time_out(self, side: str, kind: str) -> None:
         name, battle = self.seats[side].name, self.battle
-        if kind == "choose":            # 选招超时算普通攻击；普通攻击也出不了（比如够不着）就算防御 1
+        if kind == "team":              # 选人物超时：点了的保留，没选满的随机补齐
+            seat = self.seats[side]
+            names = [n for n in (seat.draft or []) if n in SELECTABLE_NAMES][:self.team_size]
+            names += self.rng.sample([n for n in SELECTABLE_NAMES if n not in names], self.team_size - len(names))
+            seat.team, seat.draft = names, list(names)
+            self._say("sys", "", f"{name}选人物超时，没选满的由电脑随机补齐。")
+        elif kind == "choose":            # 选招超时算普通攻击；普通攻击也出不了（比如够不着）就算防御 1
             target = self._choose_targets(side)[0]
             legal = {a["id"]: a for a in battle.legal_actions(target) if a["legal"] and a["effect"] != "choose_scene"}
             action = legal.get("0") or legal.get("d1") or next(iter(legal.values()))
@@ -459,6 +496,59 @@ class Room:
             "winner": battle.winner, "rounds": battle.round,
         }
 
+    # ---------- 存盘：没打完的对局记下来，服务器重启以后还能接着打 ----------
+
+    def snapshot(self) -> dict[str, Any] | None:
+        """没打完的对局的记录：开局设置，加上双方每一步的输入。不在对战中返回 None。
+
+        规则引擎是确定的，照着这些输入重打一遍就回到现在的局面，所以不用把局面本身存下来。
+        正贼到一半的那一次贼不存：回来以后那一次从头贼。"""
+        if self.phase != "battle":
+            return None
+        events = self.battle.events
+        return {
+            "format": 1, "engine_version": self.battle.VERSION, "room": self.code, "saved_at": self.wall(),
+            "seats": {side: {"name": seat.name, "token": seat.token, "bot": seat.is_bot,
+                             "team": list(seat.team or []), "auto_zei": seat.auto_zei}
+                      for side, seat in self.seats.items()},
+            "team_size": self.team_size, "zei": self.zei_enabled, "timers": self.timers_enabled,
+            "seed": self._seed, "history": list(self.battle.history),
+            "events": len(events), "tail": events[-1] if events else None,     # 重打以后用来核对
+            "chat": self.chat[-CHAT_SEND:], "chat_count": self.chat_count,
+        }
+
+    @classmethod
+    def restore(cls, data: dict[str, Any], **kwargs: Any) -> "Room":
+        """照 snapshot() 的记录把房间搭回来。记录和现在的规则对不上（重打出来的结果不一样）就抛 ValueError。"""
+        if data.get("format") != 1 or data.get("engine_version") != Battle.VERSION:
+            raise ValueError("存盘是别的版本的规则打的")
+        room = cls(str(data["room"]), **kwargs)
+        for side in SIDES:
+            s = data["seats"][side]
+            room.seats[side] = Seat(name=str(s["name"]), token=str(s["token"]), is_bot=bool(s["bot"]),
+                                    team=list(s["team"]), auto_zei=bool(s.get("auto_zei")), connected=bool(s["bot"]))
+        room.team_size, room.zei_enabled = int(data["team_size"]), bool(data["zei"])
+        room.timers_enabled, room._seed = bool(data["timers"]), data["seed"]
+        try:
+            battle = Battle(room.seats["A"].team, room.seats["B"].team, seed=room._seed, zei=room.zei_enabled)
+            room.battle = battle
+            room._start_view = room._plain_view()
+            for step in data["history"]:
+                if step["type"] == "choose":
+                    battle.choose(step["side"], step["action"], step.get("destination"), bool(step.get("on_self")))
+                else:
+                    battle.answer(step["value"], step.get("detail"))
+        except Exception as error:                      # 规则改过以后，旧的一步可能已经不合法
+            raise ValueError(f"存盘重打不出来：{error}") from error
+        tail = battle.events[-1] if battle.events else None
+        if battle.done or len(battle.events) != data["events"] or tail != data.get("tail"):
+            raise ValueError("存盘和现在的规则对不上")
+        room.chat, room.chat_count = list(data.get("chat") or []), int(data.get("chat_count") or 0)
+        room._away = True                               # 等真人都回来再计时
+        room._say("sys", "", "服务器重启过，这一局是从存盘接着打的。")
+        room.drive()
+        return room
+
     # ---------- 每个人能看到什么 ----------
 
     def state_for(self, key: str) -> dict[str, Any]:
@@ -468,7 +558,8 @@ class Room:
             "t": "state", "room": self.code, "you": None if watcher else key,
             "role": "watch" if watcher else "play", "phase": self.phase,
             "settings": {"team_size": self.team_size, "zei": self.zei_enabled, "max_team": MAX_TEAM,
-                         "timers": self.timers_enabled, "choose_seconds": CHOOSE_SECONDS, "zei_seconds": ZEI_SECONDS},
+                         "timers": self.timers_enabled, "choose_seconds": CHOOSE_SECONDS, "zei_seconds": ZEI_SECONDS,
+                         "team_seconds": TEAM_SECONDS},
             "seats": {s: None if x is None else {
                 "name": x.name, "bot": x.is_bot, "connected": x.connected or x.is_bot,
                 "ready": x.team is not None, "auto_zei": x.auto_zei,
@@ -478,6 +569,8 @@ class Room:
         }
         if self.phase == "lobby":
             state["my_team"] = seat.team if seat else None
+            state["my_draft"] = seat.draft if seat else None
+            state["timers"] = self._timers_view()
             return state
         battle = self.battle
         view = battle.view()
