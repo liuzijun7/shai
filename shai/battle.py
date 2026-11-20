@@ -22,7 +22,8 @@ from math import inf
 from typing import Any
 
 from .actions import Actions
-from .data import ACCELERATOR_BIG, NO_SELF_EFFECTS, UP_REACH, accelerator_level
+from .data import (ACCELERATOR_BIG, BENCH_PARASITES, BIG_BANG_COST, NO_DEATH_FLUKE, NO_SELF_EFFECTS, TREE_GROWTHS,
+                   UP_REACH, accelerator_level)
 from .data import (
     CHARACTERS, CHARACTER_NAME_TO_ID, FIRST_STRIKE_IDS, LEARN_THRESHOLDS, SCENES, SEAL_BY_ATTRIBUTE,
     SELF_BUFFS, SKILLS,
@@ -84,6 +85,7 @@ class Battle(Rules, Actions, TurnStart, Forms):
         self.events: list[dict[str, Any]] = []
         self.choices: dict[str, dict[str, Any]] = {}
         self.skipping: set[str] = set()
+        self.control: dict[str, str] = {}     # 这回合谁的招由对面来选（被虫子控制）：被控制的一方 -> 替他选的一方
         self.pending: dict[str, Any] | None = None
         self._decisions: list[dict[str, Any]] = []
         self._cursor = 0
@@ -259,9 +261,10 @@ class Battle(Rules, Actions, TurnStart, Forms):
             "pending": self.pending, "waiting_for": self.waiting_for(),
             "chosen": {side: side in self.choices for side in SIDES},
             "sees": {side: self._sees_through(side) for side in SIDES},     # 谁能透视对手（双方都看得到）
+            "control": dict(self.control),                                  # 谁这回合被对面替着选招
             "peek": {side: self._peek(side) for side in SIDES},             # 透视到的招（只能给本人看）
             "players": {
-                side: {"active": p.active, "team": [self._fighter_view(f) for f in p.team]}
+                side: {"active": p.active, "tree": p.tree, "team": [self._fighter_view(f) for f in p.team]}
                 for side, p in self.players.items()
             },
         }
@@ -312,6 +315,8 @@ class Battle(Rules, Actions, TurnStart, Forms):
         for first in request["sides"]:
             self._forced_first, self._probe_assign = first, assumed
             status, need, fingerprint = self._attempt()
+            if status == "need" and "label" not in need:
+                return False                    # 试算到一半要玩家选东西（激光选属性、通灵之手选特效）：不替他猜，当作有区别
             if status == "need":
                 # 每次贼只有“成”和“不成”两种结果，各试一遍就够了。
                 # （只出一次的那种贼，打平总是和其中一方赢的效果一样，不用单独试。）
@@ -348,7 +353,7 @@ class Battle(Rules, Actions, TurnStart, Forms):
     def _snapshot(self) -> dict[str, Any]:
         return {
             "players": copy.deepcopy(self.players), "choices": copy.deepcopy(self.choices),
-            "skipping": set(self.skipping),
+            "skipping": set(self.skipping), "control": dict(self.control),
             "scalars": (self.round, self.water_level, self.done, self.winner),
             "log": len(self.log), "events": len(self.events), "rng": self._main_rng.getstate(),
         }
@@ -357,6 +362,7 @@ class Battle(Rules, Actions, TurnStart, Forms):
         self.players = copy.deepcopy(snap["players"])
         self.choices = copy.deepcopy(snap["choices"])
         self.skipping = set(snap["skipping"])
+        self.control = dict(snap["control"])
         self.round, self.water_level, self.done, self.winner = snap["scalars"]
         self._want_start = False
         keep = snap["events"] + (self._kept if snap is self._snap else 0)
@@ -514,7 +520,7 @@ class Battle(Rules, Actions, TurnStart, Forms):
             fighter.lender = lender
 
     def _start_phase(self) -> None:
-        self.choices, self.skipping = {}, set()
+        self.choices, self.skipping, self.control = {}, set(), {}
         self._link_lenders()
         for side in SIDES:
             actor, target = self.fighter(side), self.fighter(self.other(side))
@@ -530,6 +536,7 @@ class Battle(Rules, Actions, TurnStart, Forms):
             if self.fighter(side).counters.get("personal_turns", 0) == 0:
                 self.skipping.discard(side)
                 self.choices.pop(side, None)
+        self._control_phase()                   # 被虫子控制的一方，这回合的招由对面来选
         self.scene_phase()                      # 牛顿选场景、龙王移动对手、库巴的扔和跑
         self.loan_phase()                       # 宋濂选借对面的哪一种内功
         self.divination_phase()                 # 占卜大师猜对手这回合用什么属性的招
@@ -611,8 +618,15 @@ class Battle(Rules, Actions, TurnStart, Forms):
                 self._emit("sealed", side=side, skill=spec["name"])
                 self._log(f"{self.label(actor)}的【{spec['name']}】被先手封住，憋回去了，这回合没有出招。")
                 continue
-            if "神技" in spec["attributes"] and actor.name != "巫师":
+            if actor.has_status("冰封") and not entries[side].get("on_self") and self._hits_foe(spec):
+                self._emit("sealed", side=side, skill=spec["name"])
+                self._log(f"{self.label(actor)}被冰封，【{spec['name']}】出不了。")
+                continue
+            if "神技" in spec["attributes"] and not self._shen_unlimited(actor, spec):
                 actor.used_shen.add(spec["id"])
+            if spec["effect"] == "big_bang":
+                self._big_bang(side, spec, blocked.get(side))
+                continue
             if entries[side].get("on_self"):            # 打自己：不用躲，对手也挡不了；伤害照算
                 self._emit("move", **self._move_data(actor, actor, spec), on_self=True)
                 self._log(f"{self.label(actor)}对自己使用【{spec['name']}】。")
@@ -666,7 +680,8 @@ class Battle(Rules, Actions, TurnStart, Forms):
         old, new = player.fighter, player.team[index]
         for name in [n for n in old.statuses if n not in SELF_BUFFS and n != "无敌"]:
             old.statuses.pop(name, None)       # 下场时不良特效和虫子消失
-        old.parasites.clear()
+        for name in [n for n in old.parasites if n not in BENCH_PARASITES]:
+            old.parasites.pop(name, None)      # 寄生种子换下场也还在
         old.lender = None
         player.active = index
         new.counters["field_turns"] = 0        # 重新上场：从头数“上场以后的第几回合”
@@ -715,6 +730,46 @@ class Battle(Rules, Actions, TurnStart, Forms):
             reason = self._illegal_reason(self.fighter(other), self.fighter(side), specs[other])
             if reason:
                 void[other] = reason
+
+    def chooser(self, side: str) -> str:
+        """这一方这回合的招由谁来选。平时是自己；被虫子控制的回合是对面。"""
+        return self.control.get(side, side)
+
+    def _control_phase(self) -> None:
+        for side in SIDES:
+            fighter, other = self.fighter(side), self.other(side)
+            who = fighter.counters.pop("controlled_next", None)        # 死亡绦虫上一回合控制住了
+            worm = fighter.parasites.get("控制绦虫")
+            if worm is not None and (worm.age + 1) % 5 == 0:           # 控制绦虫：每到第 5 个回合
+                who = worm.source
+            if who == other and not fighter.defeated and side not in self.skipping:
+                self.control[side] = other
+                self._emit("control", side=side, by=other)
+                self._log(f"{self.label(fighter)}被虫子控制，这回合出什么招由{other}来选。")
+
+    @staticmethod
+    def _hits_foe(spec: dict[str, Any]) -> bool:
+        return spec["target"] == "enemy" or spec["effect"] == "self_status_and_damage"
+
+    def _shen_unlimited(self, actor: Fighter, spec: dict[str, Any]) -> bool:
+        """这个神技不受“每条命一次”的限制：巫师；通天神树本身；神树长满了的玩家。"""
+        return (actor.name == "巫师" or spec["effect"] == "grow_tree"
+                or self.players[actor.side].tree >= TREE_GROWTHS)
+
+    def _big_bang(self, side: str, spec: dict[str, Any], defended_by: str | None) -> None:
+        """宇宙大爆炸（雨晨）：对手这回合出了防御 1，对手赢整局；否则用的人赢整局。"""
+        actor, other = self.fighter(side), self.other(side)
+        actor.resources["星体能量"] -= BIG_BANG_COST
+        self._emit("move", **self._move_data(actor, self.fighter(other), spec), blocked=bool(defended_by))
+        loser = side if defended_by else other
+        if defended_by:
+            self._emit("block", side=other, attacker=side, by=defended_by, skill=spec["name"])
+            self._log(f"{self.label(actor)}使用【宇宙大爆炸】，被{other}的【{defended_by}】防住了：{other}赢得整局。")
+        else:
+            self._log(f"{self.label(actor)}使用【宇宙大爆炸】，没有人防住：{side}赢得整局。")
+        for fighter in self.players[loser].team:
+            fighter.hp, fighter.lives_remaining, fighter.defeated = 0, 0, True
+        self._emit("life_lost", side=loser, defeated=True, **self.vitals(self.fighter(loser)))
 
     def _on_enter(self, fighter: Fighter) -> None:
         if fighter.entered:
@@ -806,7 +861,7 @@ class Battle(Rules, Actions, TurnStart, Forms):
             return "不能和超级真身互换"
         if actor.name == "武圣":
             first_life = actor.lives_remaining == actor.lives_total
-            if spec["id"] in {"t2", "t3"} and first_life:
+            if spec["id"] in {"t2", "t3", "t10"} and first_life:
                 return "第一条命不能用第二条命的招"
             if spec["id"] in {"t4", "t5"} and not first_life:
                 return "只有第一条命可以用"
@@ -814,8 +869,16 @@ class Battle(Rules, Actions, TurnStart, Forms):
             seal = SEAL_BY_ATTRIBUTE.get(attribute)
             if seal and actor.has_status(seal):
                 return f"处于{seal}，{attribute}类的招被封"
-        if "神技" in spec["attributes"] and actor.name != "巫师" and spec["id"] in actor.used_shen:
+        if "神技" in spec["attributes"] and spec["id"] in actor.used_shen and not self._shen_unlimited(actor, spec):
             return "这条命里已经用过这个神技"
+        if spec.get("parasite") == "死亡吸虫" and actor.name in NO_DEATH_FLUKE:
+            return "生化大师一系不能用死亡吸虫"
+        if actor.has_status("冰封") and target is not actor and self._hits_foe(spec):
+            return "被冰封，不能出打对手的招"
+        if spec["effect"] == "big_bang" and actor.resources["星体能量"] < BIG_BANG_COST:
+            return f"需要{BIG_BANG_COST}个星体能量"
+        if spec["effect"] == "grow_tree" and self.players[actor.side].tree >= TREE_GROWTHS:
+            return "通天神树已经长满了"
         effect = spec["effect"]
         if effect == "aurora" and actor.scene != "南极":
             return "极光只能在南极使用"

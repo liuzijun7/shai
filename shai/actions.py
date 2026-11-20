@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .data import ACCELERATOR_BIG, SCENES, SELF_BUFFS, accelerator_level
+from .data import (ACCELERATOR_BIG, QUAKES_TO_CORE, SCENES, SEAL_BY_ATTRIBUTE, SELF_BUFFS, TREE_GROWTHS,
+                   accelerator_level)
 from .model import Fighter, Status
 
 
@@ -22,7 +23,17 @@ class Actions:
         reps = self.effect_repetitions(actor)
         L = self.label
 
+        if effect == "laser":
+            reps = 1                                    # 幻影对激光不起作用（本子）
         # ----- 只和自己有关的动作 -----
+        if effect == "grow_tree":
+            player = self.players[actor.side]
+            gain = int(SCENES[actor.scene].get("tree_multiplier", 1))
+            player.tree = min(TREE_GROWTHS, player.tree + gain)
+            self._emit("build", side=actor.side, name="通天神树", progress=player.tree, of=TREE_GROWTHS)
+            self._log(f"{L(actor)}的通天神树长了{gain}次，一共{player.tree}次。"
+                      + ("长满了：这个玩家的神技不再限次数。" if player.tree >= TREE_GROWTHS else ""))
+            return
         if effect == "learn":
             return self.learn(actor, spec["inner"])
         if effect == "collect_oxygen":
@@ -92,6 +103,23 @@ class Actions:
             self._log(f"对手已经倒下，【{spec['name']}】没有目标。")
             return
 
+        if effect == "dispel":                          # 通灵之手：不算打人，不看对手无敌、免疫、闪避
+            self.dispel(actor, target)
+            return self.after_special(actor, spec)
+        if effect == "three_hits":                      # 排山倒海：三下各贼一次，赢了才打中
+            if self.blocked_by_immunity(actor, target, spec):
+                return self.after_special(actor, spec)
+            sure = actor is target or "必中" in traits or actor.has_status("心眼")
+            series = self.series_start(target)
+            for index, amount in enumerate(spec["hits"], 1):
+                if self.series_over(target, series):
+                    break
+                if sure or self._chance(0.5, actor.side, f"{L(actor)}的排山倒海第{index}下打不打得中",
+                                        yes=f"第{index}下打中", no="这一下打空"):
+                    self.deal_skill_damage(actor, target, spec, amount, reps, prechecked=True)
+                else:
+                    self._log(f"排山倒海第{index}下打空了。")
+            return self.after_special(actor, spec)
         if effect == "self_status_and_damage":
             if self.skill_hits(actor, target, spec) and not self.blocked_by_immunity(actor, target, spec):
                 self.deal_skill_damage(actor, target, spec, base, reps, prechecked=True)
@@ -174,6 +202,17 @@ class Actions:
                     {"remaining": 2, "status": "昏睡", "turns": self.duration(actor, spec, 5), "source": actor.side})
                 self._log(f"{L(target)}将在两个自己的回合后昏睡。")
             return self.after_special(actor, spec)      # 乙醚现在带特技：用完自己被封喉（自己的大招除外）
+        if effect == "parasite":                        # 2026-11-19 加的六种虫子，各放一条
+            name = spec["parasite"]
+            self.add_parasite(target, name, 1, actor.side)
+            if name == "华支睾吸虫" and name in target.parasites and target.hp > target.max_hp:
+                excess = int(target.hp - target.max_hp)   # 超出上限的体力一下被吸走
+                target.hp = int(target.max_hp)
+                self._emit("damage", side=target.side, amount=excess, layer="hp", reason=name, **self.vitals(target))
+                self._log(f"{L(target)}超出上限的{excess}体力被华支睾吸虫吸走。")
+                if actor is not target:
+                    self.heal(actor, excess, name)
+            return self.after_special(actor, spec)
         if effect == "pork_tapeworm":
             return self.add_parasite(target, "猪带绦虫", reps, actor.side)
         if effect == "sleep_tapeworm":
@@ -193,6 +232,8 @@ class Actions:
                     break
                 total += self.deal_skill_damage(actor, target, spec, base, 1, prechecked=True)
             actor.hp += total
+            if "华支睾吸虫" in actor.parasites:           # 被华支睾吸虫寄生：体力不能超过上限，也不能加命
+                actor.hp = min(int(actor.hp), int(actor.max_hp))
             if actor.hp > actor.max_hp:
                 actor.lives_total += 1
                 actor.lives_remaining += 1
@@ -200,7 +241,9 @@ class Actions:
                 self._log(f"{L(actor)}突破上限，增加一条命。")
             if total:
                 self._emit("heal", side=actor.side, amount=total, reason="饕餮牙", **self.vitals(actor))
-            return
+            for name, turns in spec["statuses"]:        # 燃烧饕餮牙：再加点燃
+                self.apply_status(target, name, self.duration(actor, spec, turns), actor.side)
+            return self.after_special(actor, spec)
 
         # ----- 大部分招共用的流程：伤害，状态，附加效果 -----
         lives = target.lives_remaining
@@ -219,6 +262,11 @@ class Actions:
             self.move_vertical(actor, 2 if "圣六式覆盖" in traits else 1)
         elif effect == "lower_target":
             self.move_vertical(target, -4 if actor.name == "龙王" and spec["id"] == "9" else -1)
+            if spec["name"] == "地震":                  # 被地震震满 10 下，掉进地心深处
+                target.counters["quaked"] = int(target.counters.get("quaked", 0)) + reps
+                if target.counters["quaked"] >= QUAKES_TO_CORE and target.scene != "地心深处":
+                    target.counters["quaked"] = 0
+                    self.set_scene(target, "地心深处", f"被地震震了{QUAKES_TO_CORE}下")
         elif effect == "antarctic":
             self.set_scene(target, "南极")
             if actor.name == "龙王":
@@ -228,8 +276,11 @@ class Actions:
             self._emit("water", level=self.water_level)
             self._log(f"水面上升到高度{self.water_level}。")
         elif effect == "death_note":
+            before = target.lives_remaining
             if self._chance(0.125, actor.side, f"{L(actor)}的死亡笔记能不能秒杀", yes="直接打掉对手这条命", no="没有秒杀"):
                 self.kill_current_life(target, actor.side, all_lives=False, reason="死亡笔记秒杀")
+            if not target.defeated and target.lives_remaining == before:
+                self.set_scene(target, "黑暗之城", "被死亡笔记打进黑暗之城")
         elif effect == "drop_ground":
             if target.scene_height > 0:
                 self.set_scene(target, "地面")
@@ -245,6 +296,13 @@ class Actions:
                 self.add_radiation(target, int(level["radiation"]) * reps, actor.side, "粒子加速器")
         elif effect == "to_scene":
             self.set_scene(target, spec["scene"])
+        elif effect == "leave_antarctic":
+            if target.scene == "南极":
+                self.set_scene(target, "地面", "被九里烧真火赶出南极")
+        elif effect == "laser":
+            self.add_radiation(target, 1, actor.side, "激光")
+            if not target.defeated:
+                self.laser_seals(actor, target)
         elif effect == "foehn":
             if target.statuses.pop("万能胶", None):
                 self._emit("status_end", side=target.side, name="万能胶")
@@ -268,4 +326,49 @@ class Actions:
                 if key != "氧气":
                     target.resources[key] = 0
             self._log(f"{L(target)}失去全部物品。")
+            self.set_scene(target, "黑暗之城深处", "被台风刮进黑暗之城深处")
         self.after_special(actor, spec)
+
+
+    def laser_seals(self, actor: Fighter, target: Fighter) -> None:
+        """激光（雨晨）：出激光的人选三个要封的属性，每个和对手贼一次，赢了那个属性封 3 回合。"""
+        L, picked = self.label, []
+        for index in range(1, 4):
+            options = [{"id": a, "name": "封" + a} for a in SEAL_BY_ATTRIBUTE if a not in picked]
+            picked.append(self._decide(
+                "choose", side=actor.side, options=options,
+                reason=f"{L(actor)}的激光：选第{index}个要封的属性（一共选 3 个，每个贼一次，赢了封 3 回合）")["value"])
+        self._log(f"{L(actor)}的激光要封：{'、'.join(picked)}。")
+        for attribute in picked:
+            if target.defeated:
+                break
+            won = self._zei(actor.side, target.side, "decisive", f"{L(actor)}的激光封不封得住{attribute}",
+                            {actor.side: f"{attribute}被封 3 回合", target.side: f"{attribute}没封上"}) == actor.side
+            if won:
+                self.apply_status(target, SEAL_BY_ATTRIBUTE[attribute], 3, actor.side)
+
+    def dispel(self, actor: Fighter, target: Fighter) -> None:
+        """通灵之手（雨晨）：消掉自己身上一个坏特效，或者对手身上一个好特效，用的人自己选。"""
+        L, options = self.label, []
+        for name, status in actor.statuses.items():
+            if name not in SELF_BUFFS and name != "无敌" and not status.unremovable:
+                options.append({"id": f"me:s:{name}", "name": f"消掉自己的{name}"})
+        for name in actor.parasites:
+            options.append({"id": f"me:p:{name}", "name": f"消掉自己身上的{name}"})
+        if target is not actor and not target.defeated:
+            for name in target.statuses:
+                if name in SELF_BUFFS or name == "无敌":
+                    options.append({"id": f"foe:s:{name}", "name": f"消掉对手的{name}"})
+        if not options:
+            self._log(f"{L(actor)}的通灵之手没有可以消的特效。")
+            return
+        choice = self._decide("choose", side=actor.side, options=options,
+                              reason=f"{L(actor)}的通灵之手：消掉哪一个特效")["value"]
+        who, kind, name = choice.split(":", 2)
+        owner = actor if who == "me" else target
+        if kind == "p":
+            self.remove_parasite(owner, name, "通灵之手")
+        elif owner.statuses.pop(name, None) is not None:
+            self._emit("status_end", side=owner.side, name=name)
+            self._log(f"{L(actor)}用通灵之手消掉了{L(owner)}的{name}。")
+

@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from .data import LOAN_TURNS, SCENES
+from .data import LOAN_TURNS, SCENES, SPECIAL_ENTRY_SCENES
 
 DRAGONS = {"龙王", "肥龙王"}
 DIVINERS = {"占卜大师", "魔法师"}
@@ -118,7 +118,8 @@ class TurnStart:
                 self.transform(diviner, "魔法师", "进化")
 
     def _ask_scene(self, side: str, reason: str, none_label: str) -> str | None:
-        options = [{"id": "", "name": none_label}] + [{"id": name, "name": name} for name in SCENES]
+        options = [{"id": "", "name": none_label}] + [
+            {"id": name, "name": name} for name in SCENES if name not in SPECIAL_ENTRY_SCENES]
         value = self._decide("choose", side=side, options=options, reason=reason)["value"]
         return value or None
 

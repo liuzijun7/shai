@@ -193,7 +193,20 @@ class Room:
 
     def _on_choose(self, side: str, m: dict[str, Any]) -> None:
         self._battle_only()
-        self.battle.choose(side, str(m.get("action")), m.get("destination"), on_self=bool(m.get("on_self")))
+        targets = self._choose_targets(side)
+        target = m.get("for") if m.get("for") in SIDES else (targets[0] if targets else side)
+        if target != side and target not in targets:
+            raise RoomError("现在轮不到你替这一方选招。")
+        if target == side and self.battle.chooser(side) != side:
+            raise RoomError("这回合你被虫子控制，由对手替你选招。")
+        self.battle.choose(target, str(m.get("action")), m.get("destination"), on_self=bool(m.get("on_self")))
+
+    def _choose_targets(self, side: str) -> list[str]:
+        """这个人现在要替哪几方选招：平时只有自己；控制了对手的回合还要替对手选。自己的排在前面。"""
+        if self.battle is None or self.battle.done or self.battle.pending:
+            return []
+        waiting = [s for s in self.battle.waiting_for() if self.battle.chooser(s) == side]
+        return sorted(waiting, key=lambda s: s != side)
 
     def _on_throw(self, side: str, m: dict[str, Any]) -> None:
         self._battle_only()
@@ -314,7 +327,7 @@ class Room:
                 return True
             return False
         for side in battle.waiting_for():
-            if self.seats[side].is_bot:
+            if self.seats[battle.chooser(side)].is_bot:     # 被控制的回合，由控制的一方（可能是电脑）来选
                 action = self.rng.choice([a for a in battle.legal_actions(side) if a["legal"]])
                 destination = self.rng.choice(list(SCENES)) if action["effect"] == "choose_scene" else None
                 battle.choose(side, action["id"], destination)
@@ -349,7 +362,7 @@ class Room:
         need, _ = self._need(side, battle.pending)
         step, rounds = len(battle.history), len(self.zei.rounds) if self.zei else 0
         if need == "choose":
-            return "choose", f"{battle.round}"
+            return "choose", f"{battle.round}-{self._choose_targets(side)[0]}"
         if need == "pick":
             return "pick", f"{step}"
         if need == "throw":
@@ -399,9 +412,10 @@ class Room:
     def _time_out(self, side: str, kind: str) -> None:
         name, battle = self.seats[side].name, self.battle
         if kind == "choose":            # 选招超时算普通攻击；普通攻击也出不了（比如够不着）就算防御 1
-            legal = {a["id"]: a for a in battle.legal_actions(side) if a["legal"] and a["effect"] != "choose_scene"}
+            target = self._choose_targets(side)[0]
+            legal = {a["id"]: a for a in battle.legal_actions(target) if a["legal"] and a["effect"] != "choose_scene"}
             action = legal.get("0") or legal.get("d1") or next(iter(legal.values()))
-            battle.choose(side, action["id"])
+            battle.choose(target, action["id"])
             self._say("sys", "", f"{name}选招超时，按【{action['name']}】算。")
         elif kind == "pick":
             option = battle.pending["options"][0]
@@ -491,7 +505,8 @@ class Room:
         state["timers"] = self._timers_view()
         state["replay_id"] = self.replay_id
         if state["need"] == "choose":
-            state["actions"] = [self._action_view(a) for a in battle.legal_actions(key)]
+            state["choose_for"] = self._choose_targets(key)[0]      # 平时是自己；控制了对手的回合，选完自己的再替对手选
+            state["actions"] = [self._action_view(a) for a in battle.legal_actions(state["choose_for"])]
         return state
 
     def _need(self, side: str, request: dict[str, Any] | None) -> tuple[str, dict[str, Any] | None]:
@@ -519,7 +534,7 @@ class Room:
                 return "pick", {"reason": request["reason"], "options": request["options"],
                                 "so_far": request.get("so_far", [])}
             return "wait", {"reason": request["reason"]}
-        return ("choose" if side in self.battle.waiting_for() else "wait"), None
+        return ("choose" if self._choose_targets(side) else "wait"), None
 
     @staticmethod
     def _action_view(action: dict[str, Any]) -> dict[str, Any]:

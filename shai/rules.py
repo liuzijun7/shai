@@ -16,7 +16,7 @@ from .data import (
     ALL_INNER_NAMES, CHARACTERS, CONTROL_STATUSES, DAMAGE_STATUSES, FIRE_SKILL_NAMES, ICE_SKILL_NAMES,
     INNER_VALUES, LEARN_MULTIPLIER,
     LEARN_THRESHOLDS, MAX_INNER_LEVEL, MAX_LEARNED_INNER, SCENES, SELF_BUFFS, SURE_HIT_IDS, VERTICAL_SCENES,
-    accelerator_level, is_signature,
+    STOLEN_BY_FLUKE, accelerator_level, is_signature,
 )
 from .model import Fighter, Parasite, RuleError, Status
 
@@ -149,6 +149,7 @@ class Rules:
                 multiplier *= 1 + INNER_VALUES["蛮力"][level]
             if actor.has_status("狂龙"):
                 multiplier *= 3
+            multiplier *= SCENES[actor.scene].get("damage_multiplier", 1)      # 在地心深处的人打别人加倍
             if actor.counters.get("wine_boost_active"):
                 multiplier *= 2
             if "魔法" in spec["attributes"] and "魔法2" in self.traits(actor):
@@ -236,7 +237,7 @@ class Rules:
         if amount <= 0 or fighter.defeated:
             return 0
         old = fighter.hp
-        capped = not (over_cap or "体力无上限" in self.traits(fighter))
+        capped = not (over_cap or "体力无上限" in self.traits(fighter)) or "华支睾吸虫" in fighter.parasites
         fighter.hp = min(int(fighter.max_hp), fighter.hp + amount) if capped else fighter.hp + amount
         actual = fighter.hp - old
         if actual:
@@ -278,7 +279,8 @@ class Rules:
         if existing and existing.turns >= turns:
             self._log(f"{self.label(target)}的{name}保持{existing.turns}回合。")
             return False
-        target.statuses[name] = Status(name, turns, source, layer, unremovable or forced, fresh=True)
+        # 真火写的是“烧几回合”，就烧几次：加上的这一回合也算一回合。别的状态照引擎的老规矩，加上的这一回合不算。
+        target.statuses[name] = Status(name, turns, source, layer, unremovable or forced, fresh=name != "真火")
         self._emit("status", side=target.side, name=name, turns=turns, good=not harmful)
         self._log(f"{self.label(target)}获得{name}（{turns}回合）。")
         if name in {"烧伤", "点燃"} and target.has_status("万能胶"):
@@ -325,9 +327,27 @@ class Rules:
             if name in SELF_BUFFS or name == "无敌" or status.unremovable:
                 continue
             fighter.statuses.pop(name, None)
-        fighter.parasites.clear()
+        for name in list(fighter.parasites):
+            self.remove_parasite(fighter, name, "清除")
         if include_radiation:
             fighter.radiation = 0
+
+    def remove_parasite(self, fighter: Fighter, name: str, why: str) -> bool:
+        """清掉一种虫子。华支睾吸虫会用它吸来的大难不死和幸运各贼一次，赢一次就活下来。"""
+        worm = fighter.parasites.get(name)
+        if worm is None:
+            return False
+        if name == "华支睾吸虫":
+            for inner in STOLEN_BY_FLUKE:
+                level = max(fighter.own_level(inner), fighter.borrowed_level(inner))
+                if level and self._chance(INNER_VALUES[inner][level], worm.source,
+                                          f"{self.label(fighter)}身上的华支睾吸虫靠吸来的{inner}活不活得下来",
+                                          yes="虫子活下来", no="虫子被清掉"):
+                    self._log(f"{self.label(fighter)}身上的华支睾吸虫靠{inner}活了下来。")
+                    return False
+        fighter.parasites.pop(name, None)
+        self._log(f"{self.label(fighter)}身上的{name}被{why}了。")
+        return True
 
     def remove_shield_effects(self, fighter: Fighter) -> None:
         for name, status in list(fighter.statuses.items()):
@@ -489,6 +509,8 @@ class Rules:
                 self._burn(actor, status, int(base / 3), "点燃")
             elif name == "超燃":
                 self._burn(actor, status, int(actor.max_hp * 2 / 3), "超燃")
+            elif name == "真火":
+                self._burn(actor, status, int(actor.max_hp / 8), "真火")
         self._parasites(actor)
 
         if scene.get("hp_loss"):
@@ -550,10 +572,41 @@ class Rules:
                 amount = int(actor.max_hp * 0.20 * parasite.count)
             elif parasite.name == "昏睡绦虫" and parasite.age % 3 == 0:
                 self.apply_status(actor, "昏睡", 1, parasite.source)
+            elif parasite.name == "血吸虫":             # 1%、2%、4%……每回合翻倍，封顶 100%
+                amount = int(actor.max_hp * min(1.0, 0.01 * 2 ** (parasite.age - 1)))
+            elif parasite.name == "死亡吸虫":           # 每回合吸 10%，隔一回合昏睡一次
+                amount = int(actor.max_hp * 0.10)
+                if parasite.age % 2 == 1:
+                    self.apply_status(actor, "昏睡", 1, parasite.source)
+            elif parasite.name == "寄生种子":           # 每回合吸 10%，再传给场下的一个人物
+                amount = int(actor.max_hp * 0.10)
+                self._spread_seed(actor, parasite)
+            elif parasite.name == "华支睾吸虫":
+                amount = int(actor.max_hp * 0.10)
+            elif parasite.name == "死亡绦虫":           # 三分之一吸 75%；没吸成，三分之一下回合控制
+                owner = parasite.source
+                if self._chance(1 / 3, owner, f"{self.label(actor)}身上的死亡绦虫吸不吸得到",
+                                yes="吸走 75% 体力", no="这回合没吸成"):
+                    amount = int(actor.max_hp * 0.75)
+                elif self._chance(1 / 3, owner, f"死亡绦虫没吸成，能不能控制{self.label(actor)}",
+                                  yes="下一回合替对手选招", no="没有控制住"):
+                    actor.counters["controlled_next"] = owner
+                    self._log(f"{self.label(actor)}被死亡绦虫控制：下一回合由{owner}替他选招。")
             if amount:
                 dealt = self.apply_nonbasic_damage(source, actor, amount, parasite.name)
                 if source is not None and dealt and not source.defeated:
                     self.heal(source, dealt, parasite.name)
+
+    def _spread_seed(self, actor: Fighter, parasite: Parasite) -> None:
+        """寄生种子每回合随机传给宿主那一方场下一个活着的人物（超级真身除外）。"""
+        team = self.players[actor.side].team
+        candidates = [f for f in team if f is not actor and not f.defeated and not f.is_true_body
+                      and "寄生种子" not in f.parasites]
+        if not candidates:
+            return
+        chosen = self.rng.choice(candidates)
+        chosen.parasites["寄生种子"] = Parasite("寄生种子", 1, parasite.source)
+        self._log(f"寄生种子传到了{actor.side}场下的一个人物身上。")
 
     def _water(self, actor: Fighter) -> None:
         """水压：在水面下第 n 层每回合扣 10n%。地幔及以下没有水压。"""
@@ -609,6 +662,9 @@ class Rules:
         from .data import CHARACTER_NAME_TO_ID
         old_name, data = fighter.name, CHARACTERS[CHARACTER_NAME_TO_ID[new_name]]
         decay = why == "衰变"
+        if not decay and "华支睾吸虫" in fighter.parasites:
+            self._log(f"{self.label(fighter)}被华支睾吸虫寄生，不能进化。")
+            return
         fighter.character_id, fighter.name = data["id"], data["name"]
         fighter.max_hp, fighter.distance = data["hp"], data["distance"]
         if decay:

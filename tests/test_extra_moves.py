@@ -94,11 +94,12 @@ class ExtraMoves(unittest.TestCase):
         play(b, "x10", "d1")
         self.assertEqual((b.fighter("B").scene, b.fighter("B").hp), ("平流层", 100000))
 
-    def test_bora_sends_to_antarctica_asleep(self):
-        b = fight()
+    def test_bora_no_longer_moves_or_sleeps(self):
+        b = fight(b="范仲淹")                               # 雨晨改过：1 万，冰封 3 回合，不去南极也不昏睡
         play(b, "x11", "d1")
-        self.assertEqual(b.fighter("B").scene, "南极")
-        self.assertIn("B的武圣获得昏睡（5回合）。", b.log)
+        self.assertEqual(b.fighter("B").scene, "地面")
+        self.assertTrue(b.fighter("B").has_status("冰封"))
+        self.assertFalse(b.fighter("B").has_status("昏睡"))
 
     def test_u92_seals_shen_and_may_put_to_sleep(self):
         b = fight()
@@ -140,7 +141,7 @@ class ExtraMoves(unittest.TestCase):
         for key, spec in SKILLS.items():
             if key.startswith("x"):
                 if spec["target"] == "enemy":
-                    self.assertIn(spec["defense"], (1, 2, 3, 4), spec["name"])
+                    self.assertIn(spec["defense"], (1, 2, 3, 4, "j"), spec["name"])
 
 
 if __name__ == "__main__":

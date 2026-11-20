@@ -73,6 +73,8 @@ class Fighter:
         """这种内功现在几级：自带的、学来的、借来的，取最高的。"""
         if self.has_status("封内"):
             return 0
+        if name in ("幸运", "大难不死") and "华支睾吸虫" in self.parasites:
+            return 0                                    # 被华支睾吸虫吸走了
         return max(self.own_level(name), self.borrowed_level(name))
 
     def learned_level(self, name: str) -> int:
@@ -112,6 +114,7 @@ class Player:
     team: list[Fighter]
     active: int = 0                 # 场上人物在 team 里的下标
     learn_progress: dict[str, int] = field(default_factory=dict)   # 学内功的进度：这个玩家所有的人物共用
+    tree: int = 0                   # 通天神树长了几次（记在玩家身上）
 
     def __post_init__(self) -> None:
         for fighter in self.team:
