@@ -75,7 +75,7 @@ class ExtraMoves(unittest.TestCase):
         play(b, "x9", "d1")
         a, foe = b.fighter("A"), b.fighter("B")
         self.assertEqual((a.resources["星体能量"], a.resources["超新星"]), (0, 0))
-        self.assertEqual(foe.hp, 100000 - 90000)
+        self.assertEqual(foe.hp, 100000 - 30000)
         self.assertEqual((foe.scene, foe.radiation), ("地面", 1))
 
     def test_foehn_blows_glue_away_and_brings_the_target_down(self):

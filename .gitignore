@@ -5,3 +5,5 @@ web/assets/characters/
 
 # 战报和回放文件里有玩家的昵称，只放在运行服务器的机器上。
 replays/
+# 防御的手绘图标是从本子照片里抠出来的，只放在本机。没有图标的时候网页用文字。
+web/assets/defense/
