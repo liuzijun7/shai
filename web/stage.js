@@ -12,6 +12,9 @@ const BEAM_EFFECTS = ["xray", "gamma", "aurora", "sound_wave", "sunspot"];
 // ---------- 技能特效：一小套贴图，所有的招共用；每个招的动画是一小段数据 ----------
 // （做法照成熟的开源网页对战游戏：舞台分层，特效是贴图加“从哪到哪、多大、多快”的数据，不是每个招单写一段程序。）
 
+// 总开关：贴图特效现在关着（雨晨嫌难看）。设计稿定了样子以后再改回 true。
+const SPRITE_FX = false;
+
 // 哪个招用哪一种特效。没列出来的按属性挑（见 fxOf）。
 const MOVE_FX = {
   "x1": "lightning", "x8": "lightning", "21": "lightning",
@@ -287,9 +290,10 @@ class Stage {
     this.anim(el, [{ opacity: 0 }, { opacity: alpha, offset: 0.2 }, { opacity: alpha, offset: 0.7 }, { opacity: 0 }], ms + 200, "linear").then(() => el.remove());
   }
   // 播一个贴图特效。有贴图才播；没有就返回 false，由原来代码画的特效顶上。
+  // 雨晨 2026-11-19：贴图特效太难看，先关掉（SPRITE_FX），等设计稿定了样子再开。出招动作用回原来代码画的那一套。
   async effect(ev) {
     const name = fxOf(ev), P = FX_PLAY[name];
-    if (this.fast || !P || !FX_ART.has(name) || ev.target === ev.side || ev.blocked) return false;
+    if (!SPRITE_FX || this.fast || !P || !FX_ART.has(name) || ev.target === ev.side || ev.blocked) return false;
     const from = ev.side, to = ev.target, d = this.dir(from), a = this.center(from), t = this.center(to);
     const actor = this.box(from).querySelector(".sprite");
     const unit = this.box(to).querySelector(".sprite").getBoundingClientRect().height, size = unit * P.size;
