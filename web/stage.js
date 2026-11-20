@@ -168,11 +168,28 @@ class Stage {
     this.fx.appendChild(el);
     return el;
   }
+  // 人物头顶在舞台里的位置。原画是靠下摆放、按比例缩小的，所以要按图片的长宽比算出它实际有多高。
+  head(side) {
+    const box = this.box(side).querySelector(".sprite"), a = box.getBoundingClientRect(), b = this.root.getBoundingClientRect();
+    const img = box.querySelector("img"), inner = box.firstElementChild;
+    let height = a.height;
+    if (img && img.naturalWidth) height = Math.min(a.height, a.width * img.naturalHeight / img.naturalWidth);
+    else if (inner) height = inner.getBoundingClientRect().height || a.height;
+    return { x: a.left - b.left + a.width / 2, y: a.bottom - b.top - height };
+  }
+  // 头顶上跳出来的字：掉血、回血、状态、MISS。字大，先弹出来，停一会儿，再往上飘走。
   pop(side, text, cls = "") {
     if (this.fast) return;
-    const c = this.center(side), n = this.fx.querySelectorAll(".pop").length;
-    const el = this.spawn("pop " + cls, c.x + (n % 3 - 1) * 26, c.y - 50 - (n % 2) * 16, esc(text));
-    this.anim(el, [{ transform: "translate(-50%, 0)", opacity: 1 }, { transform: "translate(-50%, -46px)", opacity: 0 }], 1100, "ease-in").then(() => el.remove());
+    const h = this.head(side), n = this.fx.querySelectorAll(".pop").length;
+    const el = this.spawn("pop " + cls, h.x + ((n % 3) - 1) * 54, Math.max(86, h.y - 30) - (n % 4) * 30, esc(text));
+    const frames = [
+      { transform: "translate(-50%, 8px) scale(.5)", opacity: 0, offset: 0 },
+      { transform: "translate(-50%, 0) scale(1.18)", opacity: 1, offset: 0.1 },
+      { transform: "translate(-50%, 0) scale(1)", opacity: 1, offset: 0.18 },
+      { transform: "translate(-50%, -16px) scale(1)", opacity: 1, offset: 0.78 },
+      { transform: "translate(-50%, -40px) scale(1)", opacity: 0, offset: 1 },
+    ];
+    this.anim(el, frames, 2000, "ease-out").then(() => el.remove());
   }
   async say(side, text, color) {
     if (this.fast) return;
@@ -336,7 +353,7 @@ class Stage {
       case "swap_hp":
         for (const side of ["A", "B"]) { this.vitals(side, ev.vitals[side]); this.flash(side, "#d4a514"); }
         return this.wait(400);
-      case "miss": this.pop(ev.side, "闪避", "note"); return this.anim(this.box(ev.side).querySelector(".sprite"), [{ transform: "translateY(0)" }, { transform: "translateY(-22px)" }, { transform: "translateY(0)" }], 300);
+      case "miss": this.pop(ev.side, "MISS", "miss"); return this.anim(this.box(ev.side).querySelector(".sprite"), [{ transform: "translateY(0)" }, { transform: "translateY(-22px)" }, { transform: "translateY(0)" }], 300);
       case "immune": this.pop(ev.side, "无效", "note"); return this.wait(300);
       case "block": Sfx.block(); this.pop(ev.side, "防住了", "note"); await this.flash(ev.side, "#6a9cf0"); return;
       case "reflect": Sfx.block(); this.pop(ev.side, "反弹", "note"); await this.flash(ev.side, "#9fd8ff"); return;

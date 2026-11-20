@@ -53,6 +53,14 @@ def _defense_art() -> list[str]:
     return sorted(name[:-4] for name in os.listdir(folder) if name.endswith(".png"))
 
 
+def _backgrounds() -> list[str]:
+    """本机放的对战背景图（web/assets/backgrounds/，不在仓库里）。没有的时候网页用画出来的擂台。"""
+    folder = os.path.join(WEB_DIR, "assets", "backgrounds")
+    if not os.path.isdir(folder):
+        return []
+    return sorted(name for name in os.listdir(folder) if name.lower().endswith((".png", ".jpg", ".jpeg", ".webp")))
+
+
 def _scene_list() -> list[dict[str, Any]]:
     return [{"name": name, "height": SCENES[name]["height"]} for name in SCENES]
 
@@ -170,7 +178,7 @@ app = FastAPI(title="晒", lifespan=lifespan, docs_url=None, redoc_url=None, ope
 @app.get("/api/info")
 def info() -> dict[str, Any]:
     """看回放的时候没有进房间，网页从这里拿场景表和有图的人物。"""
-    return {"scenes": _scene_list(), "art": _art_names(), "defense_art": _defense_art()}
+    return {"scenes": _scene_list(), "art": _art_names(), "defense_art": _defense_art(), "backgrounds": _backgrounds()}
 
 
 @app.get("/api/codex")
@@ -233,7 +241,7 @@ async def websocket_endpoint(socket: WebSocket) -> None:
                         "t": "joined", "room": room.code, "token": token,
                         "side": None if is_watcher(key) else key, "role": "watch" if is_watcher(key) else "play",
                         "characters": character_catalog(), "scenes": _scene_list(), "art": _art_names(),
-                        "defense_art": _defense_art(),
+                        "defense_art": _defense_art(), "backgrounds": _backgrounds(),
                     })
                     room.drive()
                 elif room is None or key is None:

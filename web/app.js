@@ -193,6 +193,7 @@ function connect(room, name, watch) {
     if (m.t === "joined") {
       me = { room: m.room, side: m.side, role: m.role, token: m.token, name };
       catalog = m.characters; scenes = m.scenes; ART = new Set(m.art || []); DEF_ART = new Set(m.defense_art || []);
+      BACKDROPS = m.backgrounds || [];
       events = []; resetPlayback();
       seatStore.set("shai-token-" + m.room, m.token);
       ui.wanted.room = m.room; location.hash = m.room;
@@ -308,6 +309,7 @@ async function openReplay(id) {
     const get = async (url) => { const r = await fetch(url); if (!r.ok) throw new Error(url); return r.json(); };
     const [record, info] = await Promise.all([get("api/replays/" + encodeURIComponent(id)), get("api/info")]);
     replay = record; scenes = info.scenes; ART = new Set(info.art || []); DEF_ART = new Set(info.defense_art || []);
+    BACKDROPS = info.backgrounds || [];
     me = { room: record.room, side: null, role: "replay", name: "" };
     startReplay();
   } catch (e) { toast("这个回放打不开。"); }
@@ -576,17 +578,19 @@ function category(a) {
 // ----- 招式卡 -----
 
 const ATTR_GLYPH = { "物理": "物", "魔法": "魔", "特技": "特", "地理": "地", "化学": "化", "生物": "生", "神技": "神", "物品": "品" };
+// 属性标是深色圆盘上的亮字，所以用比 ATTR_COLOR 亮的一组颜色。
+const ATTR_BRIGHT = { "物理": "#ff9a78", "魔法": "#c9a6ff", "特技": "#ffbd5c", "地理": "#6fd0ff", "化学": "#dcec62", "生物": "#84ec9a", "神技": "#ffe36e", "物品": "#d4dcf0" };
 function badgeHtml(a) {
   const attrs = a.attributes || [], kind = category(a);
   if (kind === "防御") {
     const code = DEF_OF_ACTION[a.id], file = DEF_ICON[code];
     return file && DEF_ART.has(file) ? `<span class="badge big"><img alt="" src="assets/defense/${file}.png"></span>` : `<span class="badge big">防</span>`;
   }
-  if (!attrs.length) return `<span class="badge" style="background:#5a6282">${kind === "内功" ? "功" : kind === "换人" ? "换" : "无"}</span>`;
-  if (attrs.length >= 8) return `<span class="badge" style="background:conic-gradient(#b5482f,#d9822b,#d4a514,#3d8f4f,#2f7fa8,#7a4fd1,#b5482f)">全</span>`;
-  const c = (n) => ATTR_COLOR[n] || "#5a6282";
-  const fill = attrs.length > 1 ? `linear-gradient(135deg, ${c(attrs[0])} 50%, ${c(attrs[1])} 50%)` : c(attrs[0]);
-  return `<span class="badge" style="background:${fill}">${ATTR_GLYPH[attrs[0]] || "？"}</span>`;
+  if (!attrs.length) return `<span class="badge" style="--c:#d4dcf0">${kind === "内功" ? "功" : kind === "换人" ? "换" : "无"}</span>`;
+  if (attrs.length >= 8) return `<span class="badge" style="--c:#ffffff">全</span>`;
+  // 有两种属性的招：字用第一种属性的颜色，圆盘的圈用第二种
+  const first = ATTR_BRIGHT[attrs[0]] || "#d4dcf0", ring = attrs.length > 1 ? `;--ring:${ATTR_BRIGHT[attrs[1]] || first}` : "";
+  return `<span class="badge" style="--c:${first}${ring}">${ATTR_GLYPH[attrs[0]] || "？"}</span>`;
 }
 // 用什么能防住这一招：有手绘图标就画图标，没有就写字。
 function defenseCell(a) {
@@ -724,8 +728,23 @@ function sideHtml() {
   const auto = mine ? `<button id="autozei" aria-pressed="${!!mine.auto_zei}" title="贼的时候电脑替我出拳：现在${mine.auto_zei ? "开着" : "关着"}">代贼</button>` : "";
   return `<button id="speed" title="动画速度">${stage && stage.speed > 1 ? "×2" : "×1"}</button>${auto}
     <button id="mute" title="声音">${Sfx.muted ? "静音" : "有声"}</button>
+    ${BACKDROPS.length ? `<button id="nextbg" title="换一张背景">背景</button>` : ""}
     <button id="openlog" title="战报和聊天">战报${unread ? `<span class="dot">${unread}</span>` : ""}</button>
     <button id="back" title="${inGame() ? "退出" : "离开"}">${inGame() ? "退出" : "离开"}</button>`;
+}
+
+// 背景图：放在本机 web/assets/backgrounds/ 里的图片（不进仓库）。没有图就用画出来的深蓝擂台。
+let BACKDROPS = [];
+function applyBackdrop() {
+  const el = $("#backdrop"), battle = $("#battle"); if (!el || !battle) return;
+  const saved = store.get("shai-backdrop"), name = BACKDROPS.includes(saved) ? saved : "";
+  el.style.backgroundImage = name ? `url("assets/backgrounds/${encodeURIComponent(name)}")` : "";
+  battle.classList.toggle("has-photo", !!name);
+}
+function nextBackdrop() {
+  const list = [""].concat(BACKDROPS), now = list.indexOf(store.get("shai-backdrop") || "");
+  store.set("shai-backdrop", list[(now + 1) % list.length]);
+  applyBackdrop();
 }
 
 const TRAY_TABS = ["全部", "技能", "神技", "专属", "内功"];
@@ -820,6 +839,8 @@ function renderBattle() {
     document.body.classList.add("battle");
     $("#app").innerHTML = `<div id="battle">
       <div class="stagewrap">
+        <div class="backdrop" id="backdrop"></div>
+        <div class="floor"><i></i></div>
         <div id="stage"></div>
         <div id="top"></div>
         <div id="center" hidden><b class="cring" id="clocknum"></b><span class="ctext" id="ctext"></span><span class="csub" id="clocksub"></span></div>
@@ -880,10 +901,12 @@ function renderBattle() {
       if (b.id === "speed" && stage) { stage.speed = stage.speed > 1 ? 1 : 2.2; store.set("shai-speed", String(stage.speed)); renderControls(); }
       if (b.id === "mute") { Sfx.muted = !Sfx.muted; store.set("shai-mute", Sfx.muted ? "1" : ""); renderControls(); }
       if (b.id === "autozei") send({ t: "auto", on: b.getAttribute("aria-pressed") !== "true" });
+      if (b.id === "nextbg") nextBackdrop();
       if (b.id === "openlog") toggleDrawer();
       if (b.id === "back") leave();
     };
     $("#feed").onclick = () => toggleDrawer(true);
+    applyBackdrop();
     $("#closedrawer").onclick = () => toggleDrawer(false);
     $("#copylog").onclick = () => showText("这一局到现在的战报", events.filter((e) => e.t === "log").map((e) => e.text).join("\n"));
     bindChat();
