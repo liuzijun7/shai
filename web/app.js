@@ -136,7 +136,7 @@ function tipHtml(key) {
     const p = S && S.view && S.view.players[id], f = p && p.team[p.active];
     if (!f) return "";
     return tipHead(f.name + "的内功", "") + Object.entries(f.inner || {}).filter(([, v]) => v > 0)
-      .map(([k, v]) => `<span class="t-text">${esc(k)} ${v} 级：${esc(innerLine(k, v))}</span>`).join("");
+      .map(([k, v]) => `<span class="${innerOff(f, k) ? "t-bad" : "t-text"}">${esc(k)} ${v} 级${innerOff(f, k)}：${esc(innerLine(k, v))}</span>`).join("");
   }
   if (kind === "status") { const c = codexIndex.status[id]; return c ? tipHead(id, c.good ? "好状态" : "不良状态") + `<span class="t-text">${esc(c.text)}</span>` : ""; }
   if (kind === "parasite") { const c = codexIndex.parasite[id]; return c ? tipHead(id, "虫子") + `<span class="t-text">${esc(c.text)}</span>` : ""; }
@@ -424,6 +424,13 @@ const wan = (n) => (n >= 10000 ? String(Math.round(n / 100) / 100) + " 万" : St
 const faceHtml = (name) => (ART.has(name)
   ? `<img alt="" src="assets/characters/${encodeURIComponent(name)}.png">` : `<i>${esc((name || "？").slice(0, 1))}</i>`);
 
+// 这种内功现在是不是不起作用：被封内，或者幸运、大难不死被华支睾吸虫吸走。不起作用就返回一句说明。
+function innerOff(f, name) {
+  if ((f.statuses || {})["封内"]) return "（被封内，不起作用）";
+  if ((f.parasites || {})["华支睾吸虫"] && (name === "幸运" || name === "大难不死")) return "（被华支睾吸虫吸走，不起作用）";
+  return "";
+}
+
 // 牌子下面那一格：内功、场下的人物、物品。头像和血条是 stage.js 画的。
 function extraHtml(side) {
   if (replay && !replayDone) return "";       // 记录里只存了最后的局面，放完之前不显示，免得剧透
@@ -431,9 +438,10 @@ function extraHtml(side) {
   if (!active) return "";
   const lent = new Set(active.borrowed || []), learned = new Set(active.learned || []);
   const mine = Object.entries(active.inner || {}).filter(([, v]) => v > 0);
+  const sealed = (active.statuses || {})["封内"] ? "（被封内，现在都不起作用）" : (active.parasites || {})["华支睾吸虫"] ? "（幸运、大难不死被虫子吸走）" : "";
   const inner = mine.length > 4
-    ? `<span class="chip inner" data-tip="inners:${side}">内功 ${mine.length} 种</span>`
-    : mine.map(([k, v]) => `<span class="chip inner" data-tip="inner:${esc(k)}:${v}">${esc(k)} ${v} 级${lent.has(k) ? "（借对手的）" : learned.has(k) ? "（学的）" : ""}</span>`).join("");
+    ? `<span class="chip inner ${sealed ? "dead" : ""}" data-tip="inners:${side}">内功 ${mine.length} 种${sealed}</span>`
+    : mine.map(([k, v]) => `<span class="chip inner ${innerOff(active, k) ? "dead" : ""}" data-tip="inner:${esc(k)}:${v}">${esc(k)} ${v} 级${lent.has(k) ? "（借对手的）" : learned.has(k) ? "（学的）" : ""}${innerOff(active, k)}</span>`).join("");
   const minis = p.team.map((f, i) => {
     if (i === p.active) return "";
     if (f.hidden) return `<span class="mini unknown" title="还没上过场的人物">？</span>`;
@@ -922,7 +930,7 @@ function showDetail(key) {
   const lent = new Set(f.borrowed || []), learned = new Set(f.learned || []);
   const inner = Object.entries(f.inner || {}).filter(([, v]) => v > 0).map(([k, v]) => {
     const c = codexIndex.inner[k], line = c && c.lines[v - 1] ? c.lines[v - 1][1].replace(/^\d 级：/, "") : "";
-    return `<span><b>${esc(k)} ${v} 级${lent.has(k) ? "（借对手的）" : learned.has(k) ? "（学的）" : ""}</b>　${esc(line)}</span>`;
+    return `<span><b>${esc(k)} ${v} 级${lent.has(k) ? "（借对手的）" : learned.has(k) ? "（学的）" : ""}${innerOff(f, k)}</b>　${esc(line)}</span>`;
   }).join("") || `<span class="muted">没有内功。</span>`;
   const st = Object.entries(f.statuses || {}).map(([n, s]) => `<span><b>${esc(n)} ${s.turns} 回合</b>　${esc((codexIndex.status[n] || {}).text || "")}</span>`)
     .concat(Object.entries(f.parasites || {}).map(([n, x]) => `<span><b>${esc(n)} ×${x.count}</b>　${esc((codexIndex.parasite[n] || {}).text || "")}</span>`)).join("")

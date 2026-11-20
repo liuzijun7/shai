@@ -136,6 +136,26 @@ class NewMoves(unittest.TestCase):
         b.choose("B", "d1")
         self.assertEqual(b.pending["kind"], "zei")
 
+    def test_same_move_on_both_sides_cancels_out(self):
+        # 雨晨 2026-11-19：两边招数一样时，不用贼，直接抵消。
+        b = fight(a="武圣", b="饕餮")
+        play(b, "0", "0")
+        self.assertIsNone(b.pending)
+        self.assertIn("两边出的都是【普通攻击】：直接抵消，谁也没打到谁。", b.log)
+        self.assertEqual((b.fighter("A").hp, b.fighter("B").hp), (100000, 150000))
+        play(b, "32", "32")                                               # 两边都出惊天混元掌
+        self.assertEqual((b.fighter("A").hp, b.fighter("B").hp), (100000, 150000))
+        self.assertFalse(b.fighter("B").has_status("封印"))
+        self.assertTrue(legal(b, "A")["32"]["legal"])                     # 抵消了不算用掉（这一条是我定的）
+
+    def test_actions_that_do_not_touch_the_opponent_do_not_cancel(self):
+        b = fight(a="武圣", b="饕餮")
+        play(b, "sys_collect_oxygen", "sys_collect_oxygen")               # 各收各的氧气
+        self.assertEqual((b.fighter("A").resources["氧气"], b.fighter("B").resources["氧气"]), (11, 11))
+        b.choose("A", "0", on_self=True)                                  # 一个打自己，一个打对手：不算同一个招
+        b.choose("B", "0")
+        self.assertEqual(b.fighter("A").hp, 100000 - 20000)
+
     def test_moving_light_wave_exists_but_is_not_offered(self):
         self.assertEqual(SKILLS["x18"]["name"], "动感光波")
         self.assertNotIn("x18", ids(fight(), "A"))

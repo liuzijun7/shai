@@ -163,16 +163,16 @@ class BothMovesAlwaysComeOut(unittest.TestCase):
         b = fight("陶渊明", ["饕餮", "武圣"])              # 陶渊明有凌波微步，先出手
         foe = b.fighter("B")
         foe.hp, foe.inner = 5000, {}
-        play(b, "0", "0", zei="B")                         # 陶渊明的虚空神术没躲开
-        self.assertIn("B的饕餮虽然已经倒下，这回合选好的【普通攻击】照样打出来。", b.log)
+        play(b, "0", "x2", zei="B")                        # 陶渊明的虚空神术没躲开
+        self.assertIn("B的饕餮虽然已经倒下，这回合选好的【芒星】照样打出来。", b.log)
         self.assertEqual(b.fighter("A").hp, 150000 - 10000)
         self.assertEqual(b.fighter("B").name, "武圣")      # 打完这一回合才换下一个人上场
 
     def test_a_fighter_that_lost_a_life_still_acts(self):
         b = fight("陶渊明", "武圣")
         b.fighter("B").hp = 5000
-        play(b, "0", "0", zei="B")
-        self.assertIn("B的武圣虽然丢了一条命，这回合选好的【普通攻击】照样打出来。", b.log)
+        play(b, "0", "x2", zei="B")
+        self.assertIn("B的武圣虽然丢了一条命，这回合选好的【芒星】照样打出来。", b.log)
         self.assertEqual(b.fighter("A").hp, 150000 - 10000)
 
 

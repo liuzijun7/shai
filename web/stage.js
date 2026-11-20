@@ -356,6 +356,11 @@ class Stage {
         if (f) { f.parasites[ev.name] = { count: (f.parasites[ev.name] ? f.parasites[ev.name].count : 0) + ev.count }; this.hud(ev.side); }
         this.pop(ev.side, ev.name + " ×" + ev.count, "bad");
         return this.wait(260);
+      case "clash":                    // 两边出了同一个招：直接抵消
+        Sfx.block();
+        for (const side of ["A", "B"]) this.pop(side, "抵消", "note");
+        await this.announce("同一个招，抵消", 700);
+        return;
       case "parasite_end":
         if (f) { delete f.parasites[ev.name]; this.hud(ev.side); }
         this.pop(ev.side, ev.name + "没了", "heal");

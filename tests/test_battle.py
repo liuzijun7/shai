@@ -135,16 +135,16 @@ class OrderAndZei(unittest.TestCase):
     def test_no_zei_when_order_does_not_matter(self):
         b = Battle(["武圣"], ["饕餮"], seed=1, true_body=False)
         b.choose("A", "0")
-        b.choose("B", "0")
+        b.choose("B", "x2")         # 芒星：1 万，封品。两边的招不一样（一样的话直接抵消），谁先谁后结果相同
         self.assertIsNone(b.pending)
         self.assertEqual(b.fighter("B").hp, 150000 - 10000)
         self.assertEqual(b.fighter("A").hp, 100000 - 10000)
 
     def test_later_zei_does_not_force_an_order_zei(self):
-        # 拳术宗师有暴击（要贼）。双方都是普通攻击，谁先谁后结果一样，所以不为先后手贼，只为暴击贼。
+        # 拳术宗师有暴击（要贼）。一边普通攻击、一边芒星，谁先谁后结果一样，所以不为先后手贼，只为暴击贼。
         b = Battle(["拳术宗师"], ["饕餮"], seed=1, true_body=False)
         b.choose("A", "0")
-        b.choose("B", "0")
+        b.choose("B", "x2")
         self.assertEqual(b.pending["purpose"], "chance")
         self.assertIn("双方同一档出手，先后不影响结果。", b.log)
         b.answer("B")               # 暴击没出

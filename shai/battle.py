@@ -556,17 +556,28 @@ class Battle(Rules, Actions, TurnStart, Forms):
         # A、B 各用一条独立的随机数流：谁先出手不会改变另一方的随机结果。
         streams = {side: random.Random(self._main_rng.getrandbits(64)) for side in SIDES}
 
+        # 0. 两边出了同一个打对手的招：直接抵消，不用贼（雨晨 2026-11-19）。
+        #    “同一个招”按名字算（龙王自己的台风和谁都能用的台风算同一个）。
+        #    抵消了就当两边都没出：不花东西，神技不算用掉，特技也不封喉（这三条是我定的）。
+        #    打自己的不算；各管各的动作（防御、收集、学内功、换人、给自己加状态）也不算。
+        clash = specs["A"]["name"] == specs["B"]["name"] and all(
+            specs[side]["action_kind"] == "skill" and self._hits_foe(specs[side]) and not entries[side].get("on_self")
+            for side in SIDES)
+        if clash:
+            self._emit("clash", skill=specs["A"]["name"])
+            self._log(f"两边出的都是【{specs['A']['name']}】：直接抵消，谁也没打到谁。")
+
         # 1. 范仲淹的换人最先生效，然后是普通换人
         void: dict[str, str] = {}               # 人物被换走以后，原来选的招出不了的一方
         for side in SIDES:
-            if specs[side]["effect"] == "swap_character" and side not in void:
+            if specs[side]["effect"] == "swap_character" and side not in void and not clash:
                 self._fan_swap(side, specs, entries, void)
         for side in SIDES:
             if specs[side]["action_kind"] == "switch":
                 self._switch(side, specs[side]["switch_to"], voluntary=True)
 
         # 2. 憋神技：场上所有神技作废，出神技的人被封神 3 回合；被憋不算用掉
-        cancelled: set[str] = set()
+        cancelled: set[str] = set(SIDES) if clash else set()
         if any(specs[side]["effect"] == "block_divine" for side in SIDES):
             for side in SIDES:
                 if "神技" in specs[side]["attributes"]:
