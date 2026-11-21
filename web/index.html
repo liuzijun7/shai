@@ -7,6 +7,10 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- 人物线稿用的滤镜：黑线变成白线，线以外（包括人物身体里面的白底）变透明，背景图从里面透出来 -->
+  <svg width="0" height="0" style="position: absolute" aria-hidden="true" focusable="false">
+    <filter id="ink" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  -0.2126 -0.7152 -0.0722 1 0"/></filter>
+  </svg>
   <div id="toast" hidden></div>
   <main id="app"></main>
   <script src="stage.js"></script>

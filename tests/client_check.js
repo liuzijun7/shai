@@ -39,7 +39,19 @@ const code = fs.readFileSync(path.join(root, "web/stage.js"), "utf8") + "\n" + f
   const found = actionsHtml();
   need(found.includes("寒") && found.indexOf("寒") < 400, "打 hc 没有先搜到寒潮");
   ui.search = "";
-  for (const side of ["A", "B"]) need(!/undefined|NaN/.test(extraHtml(side)), "牌子下面那一格有问题：" + side);
+  for (const side of ["A", "B"]) {
+    need(!/undefined|NaN/.test(extraHtml(side)), "牌子下面那一行小标签有问题：" + side);
+    need(!/undefined|NaN/.test(benchHtml(side)), "场下的人物那一排有问题：" + side);
+  }
+  ui.mode = "switch";
+  const team = teamHtml();
+  need(team.includes('class="tm now"') && !/undefined|NaN/.test(team), "换人卡拼不出来");
+  need(centerText() === "换谁上场", "换人的时候正中间的字不对");
+  ui.mode = "moves";
+  need(/class="edge"/.test(cardHtml(S.actions[0], "", false)), "技能卡没有切角的边");
+  need(barHtml(117000, 150000, { right: true }).includes("--p:78%"), "血条的长短不对");
+  need(typeof hintHtml() === "string", "页签旁边的小字拼不出来");
+  showDetail("A"); showDetail("B");
   for (const key of ["soul:武圣", "inner:幻影:4", "status:昏睡", "parasite:蚂蟥", "scene:南极", "text:随便一句"]) need(tipHtml(key).length > 0, "没有描述：" + key);
   need(defenseRowHtml().split("<button").length === 7, "防御那一排不是六个");
   need(topHtml().includes("回合") && sideHtml().includes("战报") && centerText() === "请选招", "舞台上方的字不对");

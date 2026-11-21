@@ -56,24 +56,23 @@ const ui = { picked: [], touched: false, tab: "全部", mode: "moves", search: "
 const HAND_NAMES = ["石头", "剪刀", "布"];
 const HAND_GLYPH = { "石头": "✊", "剪刀": "✌", "布": "✋" };
 
-// 人物特点在引擎里的名字比较短，这里换成看得懂的话。没列出来的照原样显示。
-const TRAIT_TEXT = {
-  "必中": "所有的招必中", "免疫不良": "免疫不良特效", "特效时长2": "打出的特效回合数加倍",
-  "免疫水压": "不怕水压", "首次X光": "第一次上场给对手累计辐射 5 次", "体力无上限": "体力没有上限",
-  "透视": "透视：上场后第一个出招的回合起，每隔一回合，对手先选招，他看到以后再选", "借内功": "回合开始时从对面场上人物的内功里选一种来借，最多借 5 回合", "神技无限": "神技不限次数",
-  "龙王技能覆盖": "洪水、寒潮、地震、台风更强，回合开始可以移动对手", "生化覆盖": "化学和生物的招更强",
-  "洪水覆盖": "洪水更强", "魔法2": "魔法的伤害和特效回合数加倍", "圣六式覆盖": "圣六式空凌更强",
-  "收集5": "收集东西一次得 5 个", "库巴": "回合开始可以被扔，也可以自己跑", "初登场无敌3": "第一次上场无敌 3 回合",
-  "真身": "体力 2 万以下自动回满",
-};
-const traitText = (list) => (list || []).map((t) => TRAIT_TEXT[t] || t).join("；");
-
 function toast(text) {
   const el = $("#toast");
   el.textContent = text; el.hidden = false;
   clearTimeout(toast.timer); toast.timer = setTimeout(() => { el.hidden = true; }, 3500);
 }
 function send(message) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(message)); }
+
+// 选人物、对战、弹出的窗口都画在一块 1600×900 的画面上（.frame，和设计稿一样大），按窗口大小整体等比缩放。
+function fitFrames() {
+  const k = Math.min(window.innerWidth / 1600, window.innerHeight / 900);
+  if (document.documentElement && k > 0) document.documentElement.style.setProperty("--k", String(k));
+}
+if (window.addEventListener) window.addEventListener("resize", fitFrames);
+fitFrames();
+const X_ICON = `<svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round"><path d="M5 5 L19 19 M19 5 L5 19"></path></svg>`;
+// 小标签。kind：plain（默认）、bad、good、inner、on（金色）
+const chipHtml = (text, kind = "", attrs = "") => `<span class="chip ${kind}"${attrs ? " " + attrs : ""}>${esc(text)}</span>`;
 
 // 画面左边站谁：上场的人自己在左边；观战和回放时 A 在左边。
 const inGame = () => !!me && me.role === "play";
@@ -232,18 +231,20 @@ function connect(room, name, watch) {
 // ---------- 进房间 ----------
 
 function renderJoin() {
-  $("#app").innerHTML = `
-    <div class="hero"><div class="logo">晒</div></div>
-    <div class="panel join">
-      <label>昵称 <input type="text" id="name" maxlength="12" value="${esc(store.get("shai-name") || "")}"></label>
-      <label>房间号 <input type="text" id="room" maxlength="8" placeholder="留空就新开一个房间" value="${esc(location.hash.slice(1))}"></label>
-      <label class="check"><input type="checkbox" id="watch"> 只观战，不上场</label>
-      <button class="primary" id="go">进入房间</button>
-      <button id="opencodex">图鉴：看全部招式、人物、内功</button>
-      <p class="muted">把房间号告诉朋友，他输入同一个房间号就能进来。房间里已经有两个人的话，后来的人自动观战。</p>
-      ${seatStore.get("shai-last-room") ? `<p class="muted">你刚才退出的房间是 <b>${esc(seatStore.get("shai-last-room"))}</b>，那一局还留着：输入这个房间号可以回去接着打。</p>` : ""}
+  const last = seatStore.get("shai-last-room");
+  $("#app").innerHTML = `<div class="login">
+    <div class="logo">晒</div>
+    <div class="lpanel">
+      <label><span>昵称</span><input class="field" type="text" id="name" maxlength="12" value="${esc(store.get("shai-name") || "")}"></label>
+      <label><span>房间号</span><input class="field" type="text" id="room" maxlength="8" placeholder="留空就开一个新房间" value="${esc(location.hash.slice(1))}"></label>
+      <label class="check"><input type="checkbox" id="watch">只观战，不上场</label>
+      <button class="go oct" id="go">进入房间</button>
+      <button class="bluebtn oct" id="opencodex">图鉴：看全部招式、人物、内功</button>
+      <p>把房间号告诉朋友，他输入同一个房间号就能进来。房间里已经有两个人的话，后来的人自动观战。</p>
+      ${last ? `<p class="back">你刚才退出的房间是 <b>${esc(last)}</b>，那一局还留着：输入这个房间号可以回去接着打。</p>` : ""}
     </div>
-    <div class="panel join replays"><h2>以前的对局</h2><div id="replaylist" class="muted">正在读取…</div></div>`;
+    <div class="lreplays"><b>以前的对局</b><div id="replaylist">正在读取…</div></div>
+  </div>`;
   $("#go").onclick = () => {
     const name = $("#name").value.trim() || "无名";
     store.set("shai-name", name);
@@ -264,12 +265,11 @@ async function loadReplayList() {
     const list = await (await fetch("api/replays")).json();
     if (!$("#replaylist")) return;
     if (!list.length) { box.textContent = "还没有打完的对局。每一局打完会自动保存在这里。"; return; }
-    box.className = "replaylist";
     box.innerHTML = list.map((r) => {
       const side = (s) => `${esc(r.names[s])}（${esc(r.teams[s].join("、"))}）`;
-      const result = r.winner ? esc(r.names[r.winner]) + " 赢" : "平局";
-      return `<div class="replayrow"><div><b>${when(r.ended_at)}</b>　${result}，${r.rounds} 回合<br><span class="muted">${side("A")} 对 ${side("B")}</span></div>
-        <div class="row"><button data-replay="${esc(r.id)}">看回放</button><button data-log="${esc(r.id)}">文字战报</button></div></div>`;
+      const result = r.winner ? esc(r.names[r.winner]) + " 赢了" : "平局";
+      return `<div class="replayrow"><div><div class="r1"><b>${when(r.ended_at)}</b>　${result}，${r.rounds} 回合</div><div class="r2">${side("A")}　对　${side("B")}</div></div>
+        <div class="row"><button class="small" data-replay="${esc(r.id)}">看回放</button><button class="small" data-log="${esc(r.id)}">文字战报</button></div></div>`;
     }).join("");
     box.onclick = (ev) => {
       const b = ev.target.closest("button"); if (!b) return;
@@ -286,13 +286,13 @@ async function loadReplayList() {
 function showText(title, text) {
   let box = $("#textbox");
   if (!box) {
-    box = document.createElement("div"); box.id = "textbox";
-    box.innerHTML = `<div class="panel textpanel"><div class="row"><h2></h2><button class="primary" id="copyall">复制全部</button><button id="closetext">关闭</button></div>
-      <textarea readonly spellcheck="false"></textarea></div>`;
+    box = document.createElement("div"); box.id = "textbox"; box.className = "modal";
+    box.innerHTML = `<div class="frame"><div class="window twin" role="dialog"><div class="whead"><b></b><button class="small gold" id="copyall">复制全部</button><button class="x" id="closetext" aria-label="关掉">${X_ICON}</button></div>
+      <div class="wbody"><textarea readonly spellcheck="false"></textarea></div></div></div>`;
     document.body.appendChild(box);
     box.onclick = async (ev) => {
       const area = $("textarea", box);
-      if (ev.target === box || ev.target.id === "closetext") { box.hidden = true; return; }
+      if (ev.target === box || ev.target === box.firstElementChild || ev.target.closest("#closetext")) { box.hidden = true; return; }
       if (ev.target.id !== "copyall") return;
       area.focus(); area.select();
       try { await navigator.clipboard.writeText(area.value); } catch (e) { try { document.execCommand("copy"); } catch (e2) { /* 复制不了就让人自己按 Ctrl+C，文字已经全选了 */ } }
@@ -300,7 +300,7 @@ function showText(title, text) {
       setTimeout(() => { ev.target.textContent = "复制全部"; }, 1500);
     };
   }
-  $("h2", box).textContent = title;
+  $(".whead b", box).textContent = title;
   $("textarea", box).value = text;
   box.hidden = false;
   $("textarea", box).scrollTop = 0;
@@ -347,7 +347,7 @@ function chatHtml() {
     || `<p class="muted">还没有人说话。</p>`;
 }
 const chatBoxHtml = () => `<div class="chat" id="chat"></div>
-  <form class="row chatform" id="chatform"><input type="text" id="chattext" maxlength="200" placeholder="说点什么" autocomplete="off"><button>发送</button></form>`;
+  <form class="chatform" id="chatform"><input class="field" type="text" id="chattext" maxlength="200" placeholder="说点什么" autocomplete="off"><button class="small">发送</button></form>`;
 
 function renderChat() {
   const box = $("#chat"); if (!box || !S) return;
@@ -374,43 +374,56 @@ function renderLobby() {
   if (!ready && !ui.touched && !ui.picked.length && S.my_draft && S.my_draft.length) ui.picked = S.my_draft.slice();
   const picked = ready ? S.my_team : (ui.picked = ui.picked.filter((n) => catalog.some((c) => c.name === n)).slice(0, size));
   const draft = $("#chattext") ? { text: $("#chattext").value, focus: document.activeElement === $("#chattext") } : null;
-  const seat = (side) => {
+  const L = watch ? "A" : me.side, R = L === "A" ? "B" : "A";
+  // 上面左右两块牌子：自己（观战时是 A）和对手
+  const status = (x) => (!x ? `把房间号 ${S.room} 告诉朋友` : !x.connected ? "掉线了" : x.ready ? "已经选好了" : "正在选人物");
+  const plate = (cls, label, side) => {
     const x = S.seats[side];
-    if (!x) return `<span class="seat muted">${side}：等人进来</span>`;
-    return `<span class="seat ${x.ready ? "ready" : ""}">${side}：${esc(x.name)}${side === me.side ? "（你）" : ""}${x.bot ? "（电脑）" : ""} ${x.ready ? "已选好" : "选人中"}${x.connected ? "" : "（掉线）"}</span>`;
+    const name = x ? x.name + (x.bot ? "（电脑）" : "") : "还没有人";
+    const line = cls === "mine" && !watch ? `房间 ${S.room}${ready ? " · 已经选好了" : ""}` : status(x);
+    return `<div class="plate ${cls} oct"><span class="pside">${label[0]}<br>${label[1]}</span><span class="pwho"><b>${esc(name)}</b><span>${esc(line)}</span></span></div>`;
   };
-  const head = watch
-    ? `<h2>你在观战</h2><span class="muted">两位玩家选好人物就开始。</span>`
-    : `<h2>选 ${size} 个人物</h2><span class="muted">已选 ${picked.length} / ${size}。对手看不到你选了谁，第一个选的先上场。</span>
-        ${ready ? `<button id="unready">重新选</button>` : `<button class="primary" id="ready" ${picked.length === size ? "" : "disabled"}>选好了</button>`}
-        <span class="clock" id="clock"></span>`;
-  $("#app").innerHTML = `
-    <div class="panel">
-      <div class="row"><h1>房间</h1><span class="code">${esc(S.room)}</span>${seat("A")}${seat("B")}
-        ${S.watchers.length ? `<span class="muted">观战：${esc(S.watchers.join("、"))}</span>` : ""}<button id="opencodex">图鉴</button></div>
-      <div class="row">
-        <label>每人带 <select id="size" ${host ? "" : "disabled"}>${Array.from({ length: S.settings.max_team }, (_, i) => `<option ${i + 1 === size ? "selected" : ""}>${i + 1}</option>`).join("")}</select> 个人物</label>
-        <label><input type="checkbox" id="zei" ${S.settings.zei ? "checked" : ""} ${host ? "" : "disabled"}> 用贼（石头剪刀布）决定先后手和概率</label>
-        <label><input type="checkbox" id="timers" ${S.settings.timers ? "checked" : ""} ${host ? "" : "disabled"}> 限时（选人物 ${S.settings.team_seconds} 秒，选招 ${S.settings.choose_seconds} 秒，贼 ${S.settings.zei_seconds} 秒）</label>
-        ${host && !S.seats.B ? `<button id="bot">加一个电脑对手</button>` : ""}
-        ${host ? "" : `<span class="muted">设置由房主（A）决定</span>`}
-      </div>
+  // 人物格子：方头像加名字条。选上的写第几个上场，第一个是“首发”。
+  const pc = (name, order, attrs) => `<button class="pc" data-name="${esc(name)}" data-tip="soul:${esc(name)}" aria-pressed="${!!order}" ${attrs || ""}>
+      <span class="art">${ART.has(name) ? `<img alt="" src="assets/characters/${encodeURIComponent(name)}.png">` : esc(name.slice(0, 1))}</span><span class="pn">${esc(name)}</span>
+      ${order ? `<span class="ord">${order}</span><span class="otag ${order === 1 ? "first" : ""}">${order === 1 ? "首发" : "出战"}</span>` : ""}</button>`;
+  const unknown = `<span class="pc unknown"><span class="art">？</span><span class="pn">？？？</span></span>`;
+  const empty = (i) => `<span class="pc empty"><span class="art">第 ${i + 1} 个</span><span class="pn"></span></span>`;
+  const w = size <= 5 ? 120 : Math.floor((644 - (size - 1) * 11) / size);       // 一队超过 5 个人时，右边的格子缩小一点排得下
+  const row = (html) => `<div class="pcs" style="--w:${w}px">${html}</div>`;
+  const grid = catalog.map((c) => pc(c.name, picked.indexOf(c.name) + 1, ready || watch ? "disabled" : "")).join("");
+  const right = watch
+    ? `<div class="bartitle">${esc(seatName("A"))}带的人物</div>${row(unknown.repeat(size))}<span class="cap">两位玩家选了谁，要等人物上场才看得到。</span>
+       <div class="sec2"><div class="bartitle">${esc(seatName("B"))}带的人物</div>${row(unknown.repeat(size))}<span class="cap">两位玩家选好人物就开始。</span></div>`
+    : `<div class="bartitle">对手带的人物</div>${row(unknown.repeat(size))}<span class="cap">对手选了谁，要等他的人物上场才看得到。</span>
+       <div class="sec2"><div class="bartitle">你的出战顺序</div>
+         ${row(picked.map((n, i) => pc(n, i + 1, ready ? "disabled" : "")).join("") + Array.from({ length: Math.max(0, size - picked.length) }, (_, i) => empty(picked.length + i)).join(""))}
+         <span class="cap">第一个选的先上场。再点一下可以取消。${S.settings.timers ? "时间到了没选满的随机补齐。" : ""}</span></div>`;
+  const button = watch ? "" : ready
+    ? `<button class="pkconfirm oct redo" id="unready">重新选</button>`
+    : `<button class="pkconfirm oct" id="ready" ${picked.length === size ? "" : "disabled"}>确认出战</button>`;
+  const dis = host ? "" : "disabled";
+  const photo = BACKDROPS.length ? ` style="--photo:url('assets/backgrounds/${encodeURIComponent(BACKDROPS[0])}')"` : "";
+  $("#app").innerHTML = `<div id="pick" class="screen"${photo}><div class="frame">
+    <div class="pkstrip"></div>
+    ${watch ? plate("mine", "A方", "A") + plate("theirs", "B方", "B") : plate("mine", "己方", L) + plate("theirs", "对方", R)}
+    <div class="pktitle"><b>选择</b><span>出战人物</span></div>
+    <div class="pkgrid">${grid}</div>
+    <div class="pkclock"><div class="diamond"><span id="pickclock"></span></div>
+      <span class="pcount">${watch ? "双方正在选" : `已选 ${picked.length} / ${size}`}<small id="pickclocksub"></small></span></div>
+    <div class="pkright">${right}</div>
+    ${button}
+    <div class="pkset">
+      <label>每人带 <select class="field" id="size" ${dis}>${Array.from({ length: S.settings.max_team }, (_, i) => `<option ${i + 1 === size ? "selected" : ""}>${i + 1}</option>`).join("")}</select> 个人物</label>
+      <label><input type="checkbox" id="zei" ${S.settings.zei ? "checked" : ""} ${dis}>用贼（石头剪刀布）决定先后手和概率</label>
+      <label><input type="checkbox" id="timers" ${S.settings.timers ? "checked" : ""} ${dis}>限时（选人物 ${S.settings.team_seconds} 秒，选招 ${S.settings.choose_seconds} 秒，贼 ${S.settings.zei_seconds} 秒）</label>
+      ${host && !S.seats.B ? `<button class="small" id="bot">加一个电脑对手</button>` : ""}
+      ${host ? "" : `<span class="muted">设置由房主（A）决定</span>`}
+      <button class="small" id="opencodex">图鉴</button>
+      ${S.watchers.length ? `<span class="muted">观战：${esc(S.watchers.join("、"))}</span>` : ""}
     </div>
-    <div class="lobby">
-      <div class="panel">
-        <div class="row">${head}</div>
-        <div class="cards">${catalog.map((c) => {
-          const order = picked.indexOf(c.name);
-          const inner = Object.entries(c.inner).map(([k, v]) => k + v).join(" ");
-          return `<button class="card" data-name="${esc(c.name)}" data-tip="soul:${esc(c.name)}" aria-pressed="${order >= 0}" ${ready || watch ? "disabled" : ""}>
-            <span class="face">${ART.has(c.name) ? `<img src="assets/characters/${encodeURIComponent(c.name)}.png" alt="">` : `<i>${esc(c.name.slice(0, 1))}</i>`}</span>
-            <span class="about"><b>${order >= 0 ? (order + 1) + ". " : ""}${esc(c.name)}</b>
-            <small>体力 ${c.hp / 10000} 万${c.shield ? "　盾 " + c.shield / 10000 + " 万" : ""}${c.lives > 1 ? "　" + c.lives + " 条命" : ""}　距离 ${c.distance}</small>
-            <small>${esc(inner || "没有内功")}</small><small>${esc(traitText(c.traits))}</small></span></button>`;
-        }).join("")}</div>
-      </div>
-      <div class="panel chatbox"><h2>聊天</h2>${chatBoxHtml()}</div>
-    </div>`;
+    <div class="pkchat">${chatBoxHtml()}</div>
+  </div></div>`;
   if (host) {
     $("#size").onchange = (e) => send({ t: "config", team_size: +e.target.value });
     $("#zei").onchange = (e) => send({ t: "config", zei: e.target.checked });
@@ -420,8 +433,9 @@ function renderLobby() {
   $("#opencodex").onclick = () => openCodex();
   if ($("#ready")) $("#ready").onclick = () => send({ t: "team", names: ui.picked });
   if ($("#unready")) $("#unready").onclick = () => send({ t: "unready" });
-  $(".cards").onclick = (ev) => {
-    const card = ev.target.closest(".card"); if (!card || ready || watch) return;
+  // 左边的格子点一下选上，再点一下取消；右边“你的出战顺序”里的点一下也是取消
+  $("#pick").onclick = (ev) => {
+    const card = ev.target.closest("button.pc[data-name]"); if (!card || ready || watch) return;
     const name = card.dataset.name, i = ui.picked.indexOf(name);
     if (i >= 0) ui.picked.splice(i, 1); else if (ui.picked.length < size) ui.picked.push(name);
     ui.touched = true;
@@ -450,7 +464,7 @@ function innerOff(f, name) {
   return "";
 }
 
-// 牌子下面那一格：内功、场下的人物、物品。头像和血条是 stage.js 画的。
+// 牌子下面那一行小标签里归这里管的：已选招、内功、物品、造的东西。状态、虫子、辐射和头像、血条是 stage.js 画的。
 function extraHtml(side) {
   if (replay && !replayDone) return "";       // 记录里只存了最后的局面，放完之前不显示，免得剧透
   const p = S.view.players[side], active = p.team[p.active];
@@ -461,22 +475,28 @@ function extraHtml(side) {
   const inner = mine.length > 4
     ? `<span class="chip inner ${sealed ? "dead" : ""}" data-tip="inners:${side}">内功 ${mine.length} 种${sealed}</span>`
     : mine.map(([k, v]) => `<span class="chip inner ${innerOff(active, k) ? "dead" : ""}" data-tip="inner:${esc(k)}:${v}">${esc(k)} ${v} 级${lent.has(k) ? "（借对手的）" : learned.has(k) ? "（学的）" : ""}${innerOff(active, k)}</span>`).join("");
-  const minis = p.team.map((f, i) => {
+  const items = Object.entries(active.resources || {}).filter(([, v]) => v > 0).map(([k, v]) => chipHtml(`${k} ${v}`)).join("");
+  const devices = Object.entries(active.devices || {}).filter(([, v]) => v > 0).map(([k, v]) => chipHtml(`${k} 造了 ${v} 下`)).join("");
+  const tree = p.tree ? chipHtml(`通天神树 ${p.tree}/10`) : "";
+  const chosen = !replay && S.view.chosen[side] && S.need !== "over" ? chipHtml("已选招", "on") : "";
+  return chosen + inner + items + devices + tree;
+}
+// 小标签下面一排场下的人物：小方头像。对手还没上过场的是问号。
+function benchHtml(side) {
+  if (replay && !replayDone) return "";
+  const p = S.view.players[side];
+  return p.team.map((f, i) => {
     if (i === p.active) return "";
-    if (f.hidden) return `<span class="mini unknown" title="还没上过场的人物">？</span>`;
+    if (f.hidden) return `<span class="face unknown" title="还没上过场的人物">？</span>`;
     if (f.is_true_body && !f.entered) return "";
-    return `<button class="mini ${f.defeated ? "out" : ""}" data-tip="soul:${esc(f.name)}" data-detail="${side}:${i}" aria-label="${esc(f.name)}">${faceHtml(f.name)}<small>${f.defeated ? "倒下" : wan(f.hp).replace(" ", "")}</small></button>`;
+    return `<button class="face ${f.defeated ? "dim" : ""}" data-tip="soul:${esc(f.name)}" data-detail="${side}:${i}" aria-label="场下的${esc(f.name)}">${faceHtml(f.name)}</button>`;
   }).join("");
-  const items = Object.entries(active.resources || {}).filter(([, v]) => v > 0).map(([k, v]) => `<span class="chip">${esc(k)} ${v}</span>`).join("");
-  const devices = Object.entries(active.devices || {}).filter(([, v]) => v > 0).map(([k, v]) => `<span class="chip">${esc(k)} 造了 ${v} 下</span>`).join("");
-  const tree = p.tree ? `<span class="chip">通天神树 ${p.tree}/10</span>` : "";
-  const chosen = !replay && S.view.chosen[side] && S.need !== "over" ? `<span class="chip on">已选招</span>` : "";
-  return `<div class="chips">${chosen}${inner}</div><div class="chips">${minis}${items}${devices}${tree}</div>`;
 }
 function renderExtras() {
   for (const side of ["A", "B"]) {
-    const el = $(`[data-extra="${side}"]`);
+    const el = $(`[data-extra="${side}"]`), bench = $(`[data-bench="${side}"]`);
     if (el) el.innerHTML = extraHtml(side);
+    if (bench) bench.innerHTML = benchHtml(side);
   }
 }
 
@@ -489,31 +509,39 @@ function resultText(winner) {
 // 操作区上面那一行字：现在要你做什么。
 function promptHtml() {
   const p = S.prompt || {}, R = rightSide();
-  if (playing) return `<span class="muted">${replay ? "正在回放…" : "正在播放这一回合…"}</span><button id="skip">${replay ? "跳到结尾" : "跳过动画"}</button>`;
+  if (playing) return `<span>${replay ? "正在回放…" : "正在播放这一回合…"}</span><button class="pill" id="skip">${replay ? "跳到结尾" : "跳过动画"}</button>`;
   if (replay) {
     return `<span class="over">回放结束：${resultText(p.winner)}</span>
-      <button class="primary" id="again">再放一遍</button><button id="back">返回</button><button data-log="${esc(replay.id)}">文字战报</button>`;
+      <button class="primary" id="again">再放一遍</button><button class="pill" id="back">返回</button><button class="pill" data-log="${esc(replay.id)}">文字战报</button>`;
   }
   const soFar = (p.so_far || []).length ? `<ul>${p.so_far.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : "";
   if (S.need === "over") {
-    const saved = S.replay_id ? `<button data-log="${esc(S.replay_id)}">这一局的文字战报</button>` : "";
+    const saved = S.replay_id ? `<button class="pill" data-log="${esc(S.replay_id)}">这一局的文字战报</button>` : "";
     return `<span class="over">对战结束：${resultText(p.winner)}</span>${inGame() ? `<button class="primary" id="rematch">再来一局</button>` : ""}${saved}
-      ${S.replay_id ? `<span class="muted">这一局已经保存。回到进房间的页面，在“以前的对局”里可以看回放。</span>` : ""}`;
+      ${S.replay_id ? `<span>这一局已经保存。回到进房间的页面，在“以前的对局”里可以看回放。</span>` : ""}`;
   }
   const sees = (S.view && S.view.sees) || {};
   if (S.need === "choose") {
     if (inGame() && S.choose_for && S.choose_for !== me.side) {
-      return `<b>对手这回合被你的虫子控制：现在替对手选他的招。</b><span class="muted">下面列的是对手的招。可以让他打你，也可以让他打他自己。</span>`;
+      return `<b>对手这回合被你的虫子控制：现在替对手选他的招。</b><span>下面列的是对手的招。可以让他打你，也可以让他打他自己。</span>`;
     }
     const peek = S.view.peek;
     if (peek) return `<span class="peek">透视：对手这回合选了【${esc(peek.name)}】${peek.on_self ? "（打他自己）" : ""}${peek.destination ? "（去" + esc(peek.destination) + "）" : ""}。</span>`;
-    return inGame() && sees[R] ? `<span class="muted">对手能透视你：你选完以后他才选，他看得到你选了什么。</span>` : "";
+    return inGame() && sees[R] ? `<span>对手能透视你：你选完以后他才选，他看得到你选了什么。</span>` : "";
   }
   if (S.need === "pick") {
     return `<b>${esc(personal(p.reason))}</b>${soFar}${p.options.map((o) => `<button class="primary" data-pick="${esc(o.id)}">${esc(o.name)}</button>`).join("")}`;
   }
-  if (p.mode) return `<span class="muted">正在贼：看舞台中间的框。</span>`;
-  if (p.reason) return `<span class="muted">${esc(personal(p.reason))}…</span>`;
+  if (p.mode) return `<span>正在贼：看舞台中间的框。</span>`;
+  if (p.reason) return `<span>${esc(personal(p.reason))}…</span>`;
+  return "";
+}
+// 页签右边那一行小字：没有别的要说的时候写这个
+function hintHtml() {
+  if (!S || S.need === "over" || replay) return "";
+  if (ui.search) return `<span>搜到 ${ui.hits || 0} 个${ui.hits && choosing() ? "，按回车出第一个能用的" : ""}</span>`;
+  if (ui.mode === "switch") return `<span class="sw">换谁上场？换人要用掉这一回合的出招。</span>`;
+  if (ui.mode === "moves" && ui.tab === "全部") return `<span>最近用过的排在前面，往下滚是全部招式</span>`;
   return "";
 }
 
@@ -522,6 +550,7 @@ function centerText() {
   if (!S || playing || replay) return "";
   const p = S.prompt || {};
   if (S.need === "over") return resultText(p.winner);
+  if (S.need === "choose" && ui.mode === "switch" && !ui.search) return "换谁上场";
   if (S.need === "choose") return inGame() && S.choose_for && S.choose_for !== me.side ? "替对手选招" : "请选招";
   if (S.need === "pick") return "请你决定";
   if (p.mode) return "";
@@ -547,7 +576,7 @@ function zeiPanelHtml() {
   const again = rounds.length ? `<div class="again">上一把打平了。现在出第 ${rounds.length + 1} 把。</div>` : "";
   let body;
   if (S.need === "throw") body = `${again}<div class="row hands">${HAND_NAMES.map((h) => `<button class="primary" data-hand="${h}"><span>${HAND_GLYPH[h]}</span> ${h}</button>`).join("")}</div>`;
-  else if (S.need === "redo") body = `<div class="row hands"><b>这一把你输了。你有内功“重贼”，还能重来 ${p.redo_left[me.side]} 次。</b><button class="primary" data-redo="1">重贼</button><button data-redo="0">算了</button></div>`;
+  else if (S.need === "redo") body = `<div class="row hands"><b>这一把你输了。你有内功“重贼”，还能重来 ${p.redo_left[me.side]} 次。</b><button class="primary" data-redo="1">重贼</button><button class="small" data-redo="0">算了</button></div>`;
   else if (p.redo_side) body = `<div class="zs">${esc(who(p.redo_side))}输了，正在决定要不要用“重贼”再来一次…</div>`;
   else if (inGame()) body = `${again}<div class="zs">${p.thrown && p.thrown[me.side] ? "你已经出了，等对手出拳…" : "这一次贼不用你出拳，等结果…"}</div>`;
   else body = `${again}<div class="zs">等双方出拳…</div>`;
@@ -578,11 +607,30 @@ function tickClock() {
   const el = $("#clock");                       // 贼的框里的那一行
   if (el) { el.textContent = text; el.classList.toggle("urgent", urgent); }
   const ring = $("#clocknum"), sub = $("#clocksub");
-  if (ring) {                                   // 舞台中间的圆圈：只放数字
-    const mine = /^(你|对手)还剩 (\d+) 秒$/.exec(text);
-    ring.textContent = mine ? mine[2] : "";
+  if (ring) {                                   // 舞台中间的圆环只放自己的秒数；等对手的时候在大字下面写一行“对手还剩 N 秒”
+    const mine = /^你还剩 (\d+) 秒$/.exec(text);
+    ring.textContent = mine ? mine[1] : "";
     ring.classList.toggle("urgent", urgent);
-    if (sub) sub.textContent = mine ? (mine[1] === "你" ? "" : "对手的时间") : text;
+    if (sub) sub.textContent = mine ? "" : text;
+  }
+  const pick = $("#pickclock"), psub = $("#pickclocksub");
+  if (pick && S && S.phase === "lobby") {        // 选人物：菱形里的倒计时
+    const gone = (performance.now() - S.at) / 1000;
+    const left = (side) => (S.timers && S.timers[side] != null ? Math.max(0, Math.ceil(S.timers[side] - gone)) : null);
+    let num = null, note = "";
+    if (!S.settings.timers) note = "不限时";
+    else if (inGame()) {
+      const mine = left(me.side), theirs = left(me.side === "A" ? "B" : "A");
+      if (mine != null) num = mine;
+      else if (theirs != null) { num = theirs; note = "对手还在选"; }
+      else if (!S.my_team) note = "两个人都进来才开始计时";
+    } else {
+      const all = ["A", "B"].map(left).filter((x) => x != null);
+      if (all.length) num = Math.max(...all);
+    }
+    pick.textContent = num == null ? "—" : String(num);
+    pick.classList.toggle("urgent", num != null && num < 10 && !note);
+    if (psub) psub.textContent = note;
   }
 }
 setInterval(tickClock, 250);
@@ -602,31 +650,44 @@ function category(a) {
 const ATTR_GLYPH = { "物理": "物", "魔法": "魔", "特技": "特", "地理": "地", "化学": "化", "生物": "生", "神技": "神", "物品": "品" };
 // 属性标是深色圆盘上的亮字，所以用比 ATTR_COLOR 亮的一组颜色。
 const ATTR_BRIGHT = { "物理": "#ff9a78", "魔法": "#c9a6ff", "特技": "#ffbd5c", "地理": "#6fd0ff", "化学": "#dcec62", "生物": "#84ec9a", "神技": "#ffe36e", "物品": "#d4dcf0" };
+// 卡片左边的属性圆：深色圆盘上的亮字。神技的招写“神”；有两种属性的招，圆盘的圈用第二种属性的颜色。
+function badgeLook(attrs, kind) {
+  if (kind === "防御") return null;
+  if (!attrs.length) return ["", kind === "内功" ? "功" : kind === "换人" ? "换" : "无"];
+  if (attrs.length >= 8) return ["--a:#ffffff", "全"];
+  const main = attrs.includes("神技") ? "神技" : attrs[0], second = attrs.find((x) => x !== main);
+  return [`--a:${ATTR_BRIGHT[main] || "#d4dcf0"}${second ? ";--ring:" + (ATTR_BRIGHT[second] || "#d4dcf0") : ""}`, ATTR_GLYPH[main] || "？"];
+}
 function badgeHtml(a) {
-  const attrs = a.attributes || [], kind = category(a);
+  const kind = category(a);
   if (kind === "防御") {
     const code = DEF_OF_ACTION[a.id], file = DEF_ICON[code];
-    return file && DEF_ART.has(file) ? `<span class="badge big"><img alt="" src="assets/defense/${file}.png"></span>` : `<span class="badge big">防</span>`;
+    return file && DEF_ART.has(file) ? `<span class="badge"><img alt="" src="assets/defense/${file}.png"></span>` : `<span class="badge">防</span>`;
   }
-  if (!attrs.length) return `<span class="badge" style="--c:#d4dcf0">${kind === "内功" ? "功" : kind === "换人" ? "换" : "无"}</span>`;
-  if (attrs.length >= 8) return `<span class="badge" style="--c:#ffffff">全</span>`;
-  // 有两种属性的招：字用第一种属性的颜色，圆盘的圈用第二种
-  const first = ATTR_BRIGHT[attrs[0]] || "#d4dcf0", ring = attrs.length > 1 ? `;--ring:${ATTR_BRIGHT[attrs[1]] || first}` : "";
-  return `<span class="badge" style="--c:${first}${ring}">${ATTR_GLYPH[attrs[0]] || "？"}</span>`;
+  const [style, glyph] = badgeLook(a.attributes || [], kind);
+  return `<span class="badge"${style ? ` style="${style}"` : ""}>${glyph}</span>`;
 }
-// 用什么能防住这一招：有手绘图标就画图标，没有就写字。
+// 用什么能防住这一招：有手绘图标就画图标，再写名字。
+function defenseName(code) {
+  const file = DEF_ICON[code];
+  return (file && DEF_ART.has(file) ? `<img alt="" src="assets/defense/${file}.png">` : "") + esc(DEF_NAME[code] || "");
+}
 function defenseCell(a) {
   const hitsFoe = a.target === "enemy" || a.effect === "self_status_and_damage";
   if (a.action_kind !== "skill" || !hitsFoe) return "—";
   if (a.defense == null) return "防不住";
-  const file = DEF_ICON[a.defense];
-  const icon = file && DEF_ART.has(file) ? `<img class="deficon" alt="" src="assets/defense/${file}.png">` : "";
-  return icon + esc(DEF_NAME[a.defense] || "");
+  return defenseName(a.defense);
 }
 const mvRow = (label, value) => `<span class="mvrow"><span>${label}</span><b>${value}</b></span>`;
+// 一张技能卡（设计稿“技能卡和说明框”）：上面招式名，左边属性圆，右边两行小格。
+// 样子：可以出；鼠标停着更亮（CSS 管）；已选中是金边加“已选”；现在出不了是灰蓝，第二行写原因。不是你选招的时候整排变暗（#tray.idle）。
+function cardShell(cls, attrs, inside) {
+  return `<button class="mv ${cls}" ${attrs}><span class="edge" aria-hidden="true"></span><span class="fill">${inside}</span></button>`;
+}
 function cardHtml(a, q, first) {
   const self = ui.aim === "self", idle = !choosing();
   const ok = !idle && (self ? a.self_ok : a.legal), why = self ? a.self_reason : a.reason;
+  const picked = idle && !!ui.myPick && ui.myPick === a.id;
   const name = q && a.name.includes(q) ? esc(a.name).split(esc(q)).join(`<mark>${esc(q)}</mark>`) : esc(a.name);
   let row1, row2;
   if (a.action_kind === "learn") {
@@ -645,8 +706,10 @@ function cardHtml(a, q, first) {
   }
   // 现在用不了的招：第二行换成用不了的原因
   const rows = !idle && !ok && why ? row1 + `<span class="mvwhy">${esc(personal(why))}</span>` : row1 + row2;
-  return `<button class="mv ${ok ? "" : "off"} ${idle ? "idle" : ""} ${first && ok ? "first" : ""}" data-action="${esc(a.id)}" data-tip="act:${esc(a.id)}" aria-disabled="${ok ? "false" : "true"}">
-    ${badgeHtml(a)}<span class="mvbody"><b class="mvname">${name}</b>${rows}</span></button>`;
+  const look = picked ? "picked" : !idle && !ok ? "off" : "";
+  return cardShell(`${look} ${idle ? "idle" : ""} ${first && ok ? "first" : ""}`,
+    `data-action="${esc(a.id)}" data-tip="act:${esc(a.id)}" aria-disabled="${ok ? "false" : "true"}"`,
+    `<span class="mvname">${name}</span>${badgeHtml(a)}${rows}${picked ? `<span class="tag">已选</span>` : ""}`);
 }
 
 // 搜索：汉字或拼音首字母。数字越小越靠前，-1 是没搜到。
@@ -669,19 +732,27 @@ function remember(id) {
   store.set("shai-recent", JSON.stringify([id].concat(recentIds().filter((x) => x !== id)).slice(0, 8)));
 }
 
-// 队伍卡：点“换人”的时候下面换成这一排。
+// 换人卡（设计稿“换人”）：点“换人”的时候下面中间换成这一排。头像、名字、血条、所在场景、状态标签。
+// 三种样子：出战中（灰蓝）、可以换上（蓝，鼠标停着更亮）、已倒下（暗灰）。
 function teamHtml() {
   const side = (inGame() && S.choose_for) || leftSide(), p = S.view.players[side], can = choosing();
-  return p.team.map((f, i) => {
-    if (f.hidden || (f.is_true_body && !f.entered)) return "";
+  const shown = p.team.map((f, i) => [f, i]).filter(([f]) => !f.hidden && !(f.is_true_body && !f.entered));
+  ui.teamCount = shown.length;
+  return shown.map(([f, i]) => {
     const act = (S.actions || []).find((a) => a.id === "switch:" + i);
     const active = i === p.active, ok = can && !!act && act.legal;
-    const pct = Math.max(0, Math.min(100, (100 * f.hp) / Math.max(1, f.max_hp)));
-    const bad = Object.keys(f.statuses || {}).concat(Object.keys(f.parasites || {}));
-    const sub = active ? "正在场上" : f.defeated ? "已经倒下" : (bad.length ? bad.join("、") : "没有不良状态");
-    return `<button class="tm ${active ? "on" : ""} ${ok ? "" : "off"}" ${ok ? `data-action="switch:${i}"` : ""} data-tip="soul:${esc(f.name)}" aria-disabled="${ok ? "false" : "true"}">
-      <span class="face">${faceHtml(f.name)}</span><span class="mvbody"><b class="mvname">${esc(f.name)}${f.lives_total > 1 ? ` <span class="lives">${"●".repeat(Math.max(0, f.lives_remaining))}</span>` : ""}</b>
-      <span class="bar"><i style="width:${pct}%"></i><span>${f.hp} / ${f.max_hp}</span></span><span class="tmsub">${esc(sub)}</span></span></button>`;
+    const state = active ? "now" : f.defeated ? "down" : can && !ok ? "off" : "can";
+    const tag = { now: chipHtml("出战中"), down: chipHtml("已倒下", "bad"), off: chipHtml("现在换不了"), can: chipHtml("可以换上", "good") }[state];
+    const place = f.defeated ? "这个人物已经没有命了" : !f.entered ? "还没上过场" : `${f.scene} · 高度 ${f.height}`;
+    const chips = Object.entries(f.statuses || {}).map(([n, s]) => chipHtml(`${n} ${s.turns} 回合`, GOOD_STATUS.includes(n) ? "good" : "bad"))
+      .concat(Object.entries(f.parasites || {}).map(([n, x]) => chipHtml(`${n}×${x.count}`, "bad")))
+      .concat(Object.entries(f.inner || {}).filter(([, v]) => v > 0).map(([k, v]) => chipHtml(`${k} ${v} 级`, "inner")))
+      .concat(Object.entries(f.resources || {}).filter(([, v]) => v > 0).map(([k, v]) => chipHtml(`${k} ${v}`))).join("");
+    const lives = f.lives_total > 1 ? `<span class="lives">${"●".repeat(Math.max(0, f.lives_remaining))}${"○".repeat(Math.max(0, f.lives_total - f.lives_remaining))}</span>` : "";
+    return `<button class="tm ${state}" ${ok ? `data-action="switch:${i}"` : ""} data-tip="soul:${esc(f.name)}" aria-disabled="${ok ? "false" : "true"}" aria-label="换上${esc(f.name)}">
+      <span class="edge" aria-hidden="true"></span><span class="fill"><span class="face ${f.defeated ? "dim" : ""}">${faceHtml(f.name)}</span>
+      <span class="tmbody"><span class="tmhead"><b>${esc(f.name)}</b>${tag}${lives}</span>${barHtml(f.hp, f.max_hp, { kind: f.hp * 4 < f.max_hp ? "low" : "hp" })}
+      <span class="tmwhere">${esc(place)}</span><span class="chips">${chips}</span></span></span></button>`;
   }).join("");
 }
 
@@ -690,19 +761,24 @@ function actionsHtml() {
   if (!all.length && ui.mode !== "switch") return "";
   const self = ui.aim === "self", q = ui.search;
   const list = all.filter((a) => !self || a.self_ok != null);       // 打自己的时候只列能对自己用的招
-  const group = (title, items, opts = {}) => (items.length || opts.always
-    ? `<div class="grp">${title}</div>` + (items.map((a, i) => cardHtml(a, opts.q, opts.first && i === 0)).join("") || `<span class="muted">${opts.empty || ""}</span>`)
-    : "");
+  const usable = (a) => choosing() && (self ? a.self_ok : a.legal);
+  // first：搜索的时候，按回车会出的那一张（第一张能用的）亮起来
+  const cards = (items, empty, highlight) => {
+    const firstOk = highlight ? items.findIndex(usable) : -1;
+    return items.map((a, i) => cardHtml(a, q, i === firstOk)).join("") || `<span class="muted">${empty}</span>`;
+  };
   if (q) {
     const hits = list.map((a) => [searchRank(a.name, pyOf(a), q), a]).filter(([r]) => r >= 0).sort((x, y) => x[0] - y[0]).map(([, a]) => a);
-    return group(`搜到 ${hits.length} 个${hits.length && choosing() ? "，按回车出第一个能用的" : ""}`, hits, { q, always: true, empty: "没有叫这个名字的招。", first: true });
+    ui.hits = hits.length;
+    return cards(hits, "没有叫这个名字的招。", true);
   }
-  if (ui.mode === "switch") return `<div class="grp">换谁上场：换人占这个回合的出招，比所有的招都先生效。</div>` + teamHtml();
-  if (ui.mode === "items") return group("物品", list.filter((a) => category(a) === "物品"), { always: true, empty: self ? "没有能对自己用的物品。" : "" });
+  if (ui.mode === "switch") return teamHtml() || `<span class="muted">没有能换上的人物。</span>`;
+  if (ui.mode === "items") return cards(list.filter((a) => category(a) === "物品"), self ? "没有能对自己用的物品。" : "现在没有能用的物品。");
   const moves = list.filter((a) => !["防御", "换人", "物品"].includes(category(a)));
-  if (ui.tab !== "全部") return group(ui.tab, moves.filter((a) => category(a) === ui.tab), { always: true, empty: "这一类里没有招。" });
-  const recent = recentIds().map((id) => list.find((a) => a.id === id)).filter(Boolean).slice(0, 4);
-  return group("最近用过", recent) + group("全部招式（往下滚，或者在左边搜）", moves, { always: true });
+  if (ui.tab !== "全部") return cards(moves.filter((a) => category(a) === ui.tab), "这一类里没有招。");
+  // “全部”：最近用过的排在前面，后面接着全部招式
+  const recent = recentIds().map((id) => list.find((a) => a.id === id)).filter(Boolean).slice(0, 4), seen = new Set(recent.map((a) => a.id));
+  return cards(recent.concat(moves.filter((a) => !seen.has(a.id))), "这一类里没有招。");
 }
 
 // 搜索框下面的一排防御：用得最多，随时一点就出。
@@ -732,16 +808,19 @@ function appendLog(text) {
 // 舞台上方正中：两边在哪一层、第几回合、各剩几个人。
 function topHtml() {
   const v = S.view, L = leftSide(), R = rightSide();
-  if (replay) return `<div class="rnd"><b>回放</b><span>${when(replay.ended_at)}</span><span>${esc(replay.names.A)} 对 ${esc(replay.names.B)}</span><span>共 ${replay.rounds} 回合</span></div>`;
+  if (replay) return `<div class="vs"><span class="me">${esc(replay.names.A)}</span><span>对</span><span class="foe">${esc(replay.names.B)}</span></div>
+    <div class="rnd"><b>回放</b><span>${when(replay.ended_at)}</span><span>共 ${replay.rounds} 回合</span></div>`;
   const now = (side) => (stage && stage.model && stage.model[side]) || v.players[side].team[v.players[side].active] || {};
   const a = now(L), b = now(R);
   const alive = (side) => v.players[side].team.filter((f) => !f.defeated && !(f.is_true_body && !f.entered)).length;
-  const rel = a.height === b.height ? "同一层" : a.height > b.height ? `${who(L)}在上面` : `${who(R)}在上面`;
   const water = v.water_level < 0 ? "" : `<span>水面高度 ${v.water_level}</span>`;
   const watchers = S.watchers.length ? `<span>观战：${esc(S.watchers.join("、"))}</span>` : "";
-  return `<div class="vs"><div>${esc(a.scene || "")}<small>高度 ${a.height ?? ""}</small></div><i>›››</i><i>‹‹‹</i><div>${esc(b.scene || "")}<small>高度 ${b.height ?? ""}</small></div></div>
+  // 两边所在的场景，中间两组箭头：自己的橙色朝右，对手的蓝色朝左
+  const chev = (color, flip) => `<svg aria-hidden="true" width="46" height="22" viewBox="0 0 46 22" fill="${color}"${flip ? ' style="transform: scaleX(-1)"' : ""}>`
+    + [[0, ".35"], [14, ".65"], [28, "1"]].map(([x, o]) => `<path d="M${x} 1 h7 l9 10 l-9 10 h-7 l9 -10 z" opacity="${o}"></path>`).join("") + "</svg>";
+  return `<div class="vs"><span class="me" data-tip="scene:${esc(a.scene || "")}">${esc(a.scene || "")}</span>${chev("#ffb060")}${chev("#8cc0ff", true)}<span class="foe" data-tip="scene:${esc(b.scene || "")}">${esc(b.scene || "")}</span></div>
     <div class="rnd"><span>${alive(L)} 人</span><b>第 ${v.round} 回合</b><span>${alive(R)} 人</span></div>
-    <div class="rnd csub"><span>${rel}</span><span>房间 ${esc(S.room)}</span>${water}${inGame() ? "" : "<span>你在观战</span>"}${watchers}</div>`;
+    <div class="csub"><span>房间 ${esc(S.room)}</span>${water}${inGame() ? "" : "<span>你在观战</span>"}${watchers}</div>`;
 }
 // 舞台右边的一列小圆钮：动画速度、声音、战报和聊天、退出。
 function sideHtml() {
@@ -756,15 +835,21 @@ function sideHtml() {
 }
 
 // 背景图：放在本机 web/assets/backgrounds/ 里的图片（不进仓库）。没有图就用画出来的深蓝擂台。
+// 没选过的时候用第一张（设计稿用的就是第一张“夜色鸟居”）；选过“不要背景图”就是空字符串。
 let BACKDROPS = [];
+function currentBackdrop() {
+  const saved = store.get("shai-backdrop");
+  if (saved === null || saved === undefined) return BACKDROPS[0] || "";
+  return BACKDROPS.includes(saved) ? saved : "";
+}
 function applyBackdrop() {
   const el = $("#backdrop"), battle = $("#battle"); if (!el || !battle) return;
-  const saved = store.get("shai-backdrop"), name = BACKDROPS.includes(saved) ? saved : "";
+  const name = currentBackdrop();
   el.style.backgroundImage = name ? `url("assets/backgrounds/${encodeURIComponent(name)}")` : "";
   battle.classList.toggle("has-photo", !!name);
 }
 function nextBackdrop() {
-  const list = [""].concat(BACKDROPS), now = list.indexOf(store.get("shai-backdrop") || "");
+  const list = [""].concat(BACKDROPS), now = list.indexOf(currentBackdrop());
   store.set("shai-backdrop", list[(now + 1) % list.length]);
   applyBackdrop();
 }
@@ -776,29 +861,37 @@ function renderControls() {
   if (!$("#battle") || !S || S.phase === "lobby") return;
   $("#top").innerHTML = topHtml();
   $("#side").innerHTML = sideHtml();
-  $("#prompt").innerHTML = promptHtml();
   const box = $("#stage .zeibox");
   if (box && !playing) {                       // 播放的时候这个框归舞台管（它要在里面亮出贼的结果）
     const html = zeiPanelHtml();
     if (html) { box.innerHTML = html; box.hidden = false; } else { box.hidden = true; box.innerHTML = ""; }
   }
-  const text = centerText(), center = $("#center");
-  center.hidden = playing || (box && !box.hidden);
-  $("#ctext").textContent = text;
-  tickClock();
   const can = choosing();
+  if (can && !ui.wasChoosing) ui.myPick = null;       // 新的一回合：上一回合选的招不再标“已选”
   if (can) ui.lastActions = S.actions;
   else ui.sceneAction = null;
+  // 正中间：轮到你的时候是圆环倒计时加一行字；等对手、对战结束的时候是一行大字
+  const text = centerText(), center = $("#center"), waiting = !can && S.need !== "pick";
+  center.hidden = playing || (box && !box.hidden) || !text;
+  center.className = waiting ? "wait" : "";
+  $("#ctext").textContent = text;
+  $("#cwait").hidden = !waiting || S.need === "over";
+  tickClock();
+  const team = can && ui.mode === "switch" && !ui.search;
   $("#tray").classList.toggle("idle", !can);
+  $("#tray").classList.toggle("switching", team);
   const proxy = inGame() && S.choose_for && S.choose_for !== me.side;       // 正在替被控制的对手选招
-  $("#aim").innerHTML = `<span>这一招打</span><button data-aim="foe" aria-pressed="${ui.aim === "foe"}">${proxy ? "你" : "对手"}</button><button data-aim="self" aria-pressed="${ui.aim === "self"}">${proxy ? "他自己" : "自己"}</button>
+  $("#aim").innerHTML = `<span>这一招打</span><button class="pill" data-aim="foe" aria-pressed="${ui.aim === "foe"}">${proxy ? "你" : "对手"}</button><button class="pill" data-aim="self" aria-pressed="${ui.aim === "self"}">${proxy ? "他自己" : "自己"}</button>
     ${ui.aim === "self" ? `<span class="warn">打自己：不用躲，够不着也能用，伤害和特效都落在自己身上。</span>` : ""}`;
   $("#defrow").innerHTML = defenseRowHtml();
-  $("#tabs").innerHTML = ui.mode === "moves" && !ui.search
-    ? TRAY_TABS.map((t) => `<button data-tab="${t}" aria-pressed="${t === ui.tab}">${t}</button>`).join("") : "";
-  $("#modes").innerHTML = MODES.map(([id, name]) => `<button data-mode="${id}" aria-pressed="${id === ui.mode && !ui.search}"><span>${name}</span></button>`).join("");
-  $("#scenepick").innerHTML = ui.sceneAction ? `<div class="row"><b>去哪个场景？</b>${scenes.map((s) => `<button data-scene="${esc(s.name)}">${esc(s.name)}</button>`).join("")}<button>取消</button></div>` : "";
-  $("#actions").innerHTML = actionsHtml();
+  $("#scenepick").innerHTML = ui.sceneAction ? `<b>去哪个场景？</b>${scenes.map((s) => `<button class="pill" data-scene="${esc(s.name)}">${esc(s.name)}</button>`).join("")}<button class="pill">取消</button>` : "";
+  $("#tabs").innerHTML = ui.mode === "moves" && !ui.search && !ui.sceneAction
+    ? TRAY_TABS.map((t) => `<button class="pill" data-tab="${t}" aria-pressed="${t === ui.tab}">${t}</button>`).join("") : "";
+  $("#modes").innerHTML = MODES.map(([id, name]) => `<button class="big" data-mode="${id}" aria-pressed="${id === ui.mode && !ui.search}"><span class="edge" aria-hidden="true"></span><span class="fill">${name}</span></button>`).join("");
+  const actions = $("#actions");
+  actions.innerHTML = actionsHtml();
+  actions.className = ui.mode === "switch" && !ui.search ? "team" + ((ui.teamCount || 0) > 3 ? " many" : "") : "";
+  $("#prompt").innerHTML = promptHtml() || hintHtml();
   renderExtras();
   renderChat();
   refreshTip();
@@ -827,6 +920,7 @@ async function pump() {
   playing = false;
   if (replay) replayDone = true;
   if (stage && S && S.view) {
+    stage.clearBand();
     stage.skipping = false;
     if (!S.paused) stage.setModel(modelOf(S.view));   // 播完以后和服务器的局面对齐；停在半路时以已播的事件为准
   }
@@ -845,6 +939,7 @@ function chooseAction(id) {
   if (!action || !choosing()) return;
   if (action.effect === "choose_scene") { ui.sceneAction = id; renderControls(); return; }
   send({ t: "choose", action: id, on_self: ui.aim === "self", for: S.choose_for });
+  ui.myPick = id;                               // 等对手的时候这张卡标“已选”
   remember(id);
   ui.aim = "foe"; ui.search = ""; $("#search").value = "";
   hideTip();
@@ -863,32 +958,34 @@ function toggleDrawer(open) {
 function renderBattle() {
   if (!$("#battle")) {
     document.body.classList.add("battle");
-    $("#app").innerHTML = `<div id="battle">
-      <div class="stagewrap">
-        <div class="backdrop" id="backdrop"></div>
+    // 整屏是背景图，上面一块 1600×900 的画面（设计稿“对战”那几张的布局）
+    $("#app").innerHTML = `<div id="battle" class="screen">
+      <div class="backdrop" id="backdrop"></div><div class="shadeb"></div>
+      <div class="frame">
         <div class="floor"><i></i></div>
         <div id="stage"></div>
         <div id="top"></div>
-        <div id="center" hidden><b class="cring" id="clocknum"></b><span class="ctext" id="ctext"></span><span class="csub" id="clocksub"></span></div>
+        <div id="center" hidden><b class="cring" id="clocknum"></b><span class="ctext" id="ctext"></span>
+          <span class="cwait" id="cwait">WAITING<svg aria-hidden="true" width="22" height="12" viewBox="0 0 22 12"><path d="M0 0 L9 6 L0 12 Z M11 0 L20 6 L11 12 Z"></path></svg></span><span class="csec" id="clocksub"></span></div>
         <div id="side"></div>
         <button id="feed" title="点开看全部战报"></button>
-      </div>
-      <div id="tray">
-        <div id="trayleft">
-          <div class="searchbox">
-            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#cfe2ff" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.8-3.8"></path></svg>
-            <input type="text" id="search" placeholder="搜招式，可打拼音首字母" autocomplete="off" spellcheck="false" aria-label="搜招式">
+        <div id="tray">
+          <div id="trayleft">
+            <div class="searchbox">
+              <input type="text" id="search" class="oct" placeholder="搜招式，可打拼音首字母" autocomplete="off" spellcheck="false" aria-label="搜招式">
+              <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#cfe2ff" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.8-3.8"></path></svg>
+            </div>
+            <div class="defrow" id="defrow"></div>
+            <div class="aim" id="aim"></div>
           </div>
-          <div class="defrow" id="defrow"></div>
-          <div class="aim" id="aim"></div>
+          <div id="traymid"><div id="trayhead"><div id="scenepick"></div><div id="tabs"></div><div id="prompt"></div></div><div id="actions"></div></div>
+          <div id="modes"></div>
         </div>
-        <div id="traymid"><div id="prompt"></div><div class="tabs" id="tabs"></div><div id="scenepick"></div><div id="actions"></div></div>
-        <div id="modes"></div>
-      </div>
-      <div id="drawer" hidden>
-        <div class="row"><h2>战报</h2><span class="row"><button id="copylog">复制战报</button><button id="closedrawer">关闭</button></span></div>
-        <div class="log" id="log"></div>
-        ${replay ? "<span></span><span></span><span></span>" : `<h2>聊天</h2>${chatBoxHtml()}`}
+        <div id="drawer" hidden>
+          <div class="row"><h2>战报</h2><span class="row"><button class="small" id="copylog">复制战报</button><button class="small" id="closedrawer">关闭</button></span></div>
+          <div class="log" id="log"></div>
+          ${replay ? "<span></span><span></span><span></span>" : `<h2>聊天</h2>${chatBoxHtml()}`}
+        </div>
       </div></div>`;
     const search = $("#search");
     search.oninput = () => { ui.search = search.value.trim(); renderControls(); };
@@ -961,8 +1058,11 @@ function openModal(title, body, cls) {
   closeModal();
   const m = document.createElement("div");
   m.id = "modal"; m.className = "modal";
-  m.innerHTML = `<div class="dialog" role="dialog" aria-label="${esc(title)}"><div class="dhead"><span>${esc(title)}</span><button class="x" aria-label="关闭">×</button></div><div class="dbody ${cls || ""}">${body}</div></div>`;
-  m.addEventListener("click", (ev) => { if (ev.target === m || ev.target.closest(".x")) closeModal(); });
+  // 蓝色窗口，上面一条浅一点的标题栏，右上角是关掉的叉。窗口外面点一下也关掉。
+  m.innerHTML = `<div class="frame"><div class="window ${cls || ""}" role="dialog" aria-label="${esc(title)}">
+    <div class="whead"><b>${esc(title)}</b><button class="x" aria-label="关掉">${X_ICON}</button></div><div class="wbody">${body}</div></div></div>`;
+  // （只看点的是不是窗口外面那一层：窗口里的内容点了以后可能整个重画，点的那个东西已经不在页面上了）
+  m.addEventListener("click", (ev) => { if (ev.target === m || ev.target === m.firstElementChild || ev.target.closest(".x")) closeModal(); });
   document.body.appendChild(m);
   return m;
 }
@@ -977,66 +1077,113 @@ function showDetail(key) {
   if (!f || f.hidden) return;
   const card = codexIndex.char[f.name] || { lines: [] };
   const lent = new Set(f.borrowed || []), learned = new Set(f.learned || []);
+  const none = (text) => `<p class="none">${text}</p>`;
   const inner = Object.entries(f.inner || {}).filter(([, v]) => v > 0).map(([k, v]) => {
     const c = codexIndex.inner[k], line = c && c.lines[v - 1] ? c.lines[v - 1][1].replace(/^\d 级：/, "") : "";
-    return `<span><b>${esc(k)} ${v} 级${lent.has(k) ? "（借对手的）" : learned.has(k) ? "（学的）" : ""}${innerOff(f, k)}</b>　${esc(line)}</span>`;
-  }).join("") || `<span class="muted">没有内功。</span>`;
-  const st = Object.entries(f.statuses || {}).map(([n, s]) => `<span><b>${esc(n)} ${s.turns} 回合</b>　${esc((codexIndex.status[n] || {}).text || "")}</span>`)
-    .concat(Object.entries(f.parasites || {}).map(([n, x]) => `<span><b>${esc(n)} ×${x.count}</b>　${esc((codexIndex.parasite[n] || {}).text || "")}</span>`)).join("")
-    || `<span class="muted">没有状态，也没有虫子。</span>`;
-  const items = Object.entries(f.resources || {}).filter(([, v]) => v > 0).map(([k, v]) => `${esc(k)} ${v}`).join("、") || "没有";
+    return `<p><span class="iname">${esc(k)} ${v} 级${lent.has(k) ? "（借对手的）" : learned.has(k) ? "（学的）" : ""}${innerOff(f, k)}</span><br>${esc(line)}</p>`;
+  }).join("") || none("没有");
+  const st = Object.entries(f.statuses || {}).map(([n, s]) => `<p><span class="${GOOD_STATUS.includes(n) ? "gname" : "sname"}">${esc(n)}，还剩 ${s.turns} 回合</span><br>${esc((codexIndex.status[n] || {}).text || "")}</p>`).join("") || none("没有");
+  const bugs = Object.entries(f.parasites || {}).map(([n, x]) => `<p><span class="sname">${esc(n)} ×${x.count}</span><br>${esc((codexIndex.parasite[n] || {}).text || "")}</p>`).join("") || none("没有");
   const owner = inGame() ? (side === me.side ? "你" : "对手") : seatName(side);
-  const body = `<div class="dcol">
-      <div class="dsec">基础信息</div>
-      <div class="dbase"><span class="face">${faceHtml(f.name)}</span>
-        <div class="dl"><span>名字</span><b>${esc(f.name)}</b><span>谁的人物</span><b>${esc(owner)}</b>
-          <span>体力</span><b>${f.hp} / ${f.max_hp}</b>${f.max_shield ? `<span>盾牌</span><b>${f.shield} / ${f.max_shield}</b>` : ""}
-          <span>命</span><b>还有 ${f.lives_remaining} 条，一共 ${f.lives_total} 条</b>
-          <span>在哪儿</span><b>${esc(f.scene)}（高度 ${f.height}）</b><span>累计辐射</span><b>${f.radiation || 0} / 15</b><span>物品</span><b>${items}</b></div></div>
-      <div class="dsec">内功</div><div class="dlist">${inner}</div>
-      <div class="dsec">身上的状态和虫子</div><div class="dlist">${st}</div>
-    </div>
-    <div class="dcol"><div class="dsec">魂印</div><div class="dtext">${tipLines(card.lines)}</div></div>`;
-  openModal("人物详情", body);
+  const pair = (k, v) => `<div><span>${esc(k)}</span><span>${esc(v)}</span></div>`;
+  const pairs = [pair("名字", f.name), pair("属于", owner), pair("体力", `${f.hp} / ${f.max_hp}`)]
+    .concat(f.max_shield ? [pair("盾牌", `${f.shield} / ${f.max_shield}`)] : [])
+    .concat([pair("命", `还有 ${f.lives_remaining} 条，一共 ${f.lives_total} 条`), pair("在哪", `${f.scene} · 高度 ${f.height}`)])
+    .concat(f.radiation ? [pair("累计辐射", `${f.radiation} / 15`)] : [])
+    .concat(Object.entries(f.resources || {}).filter(([, v]) => v > 0).map(([k, v]) => pair(k, v + " 个"))).join("");
+  // 右边两个页签：魂印、专属的招
+  const own = CODEX ? CODEX.skills.filter((s) => s.character === f.name) : [];
+  const panes = {
+    soul: `<div class="strip">${esc(f.name)}</div><div class="dtext scroll">${tipLines(card.lines)}</div>`,
+    moves: `<div class="strip">${esc(f.name)}的专属的招<small>${own.length ? own.length + " 个" : ""}</small></div><div class="dtext scroll">${own.map((s) =>
+      `<div class="exm">${tipHead(s.name, s.tag)}${tipLines(s.lines)}</div>`).join("") || `<span>没有专属的招。</span>`}</div>`,
+  };
+  const body = `<div class="dtop"><span class="face">${faceHtml(f.name)}</span><div class="dbase"><div class="bartitle">基础信息</div><div class="pairs">${pairs}</div></div></div>
+    <div class="dleft scroll"><div class="bartitle">内功</div><div class="dsecbody">${inner}</div>
+      <div class="bartitle">身上的状态</div><div class="dsecbody">${st}</div>
+      <div class="bartitle">身上的虫子</div><div class="dsecbody">${bugs}</div></div>
+    <div class="dright"><div class="tabs2"><button class="wtab" data-dtab="soul" aria-pressed="true">魂印</button><button class="wtab" data-dtab="moves" aria-pressed="false">专属的招</button></div>
+      <div class="dpane">${panes.soul}</div></div>`;
+  const m = openModal("人物详情", body, "dwin");
+  m.addEventListener("click", (ev) => {
+    const b = ev.target.closest && ev.target.closest("[data-dtab]"); if (!b) return;
+    $(".dpane", m).innerHTML = panes[b.dataset.dtab];
+    m.querySelectorAll("[data-dtab]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  });
 }
 
 // ---------- 图鉴：全部招式、人物、内功、状态、场景 ----------
 
 const CODEX_TABS = ["招式", "人物", "内功", "状态和虫子", "场景"];
-const cx = { tab: "招式", q: "", key: null };
+const CODEX_KINDS = ["全部", "技能", "神技", "专属"];
+const cx = { tab: "招式", q: "", key: null, kind: "全部" };
 function codexItems(tab) {
   if (!CODEX) return [];
-  if (tab === "招式") return CODEX.skills.map((s) => ({ key: s.id, name: s.name, py: s.py, group: s.kind, tag: s.tag, lines: s.lines, color: ATTR_COLOR[s.attributes[0]] }));
+  if (tab === "招式") return CODEX.skills.map((s) => ({ key: s.id, name: s.name, py: s.py, group: s.kind, tag: s.tag, lines: s.lines, skill: s }));
   if (tab === "人物") return CODEX.characters.map((c) => ({ key: c.name, name: c.name, py: c.py, group: c.group, tag: "魂印", lines: c.lines }));
   if (tab === "内功") return CODEX.inner.map((c) => ({ key: c.name, name: c.name, py: c.py, group: "内功", tag: "内功", lines: c.lines }));
   if (tab === "场景") return CODEX.scenes.map((c) => ({ key: c.name, name: c.name, py: "", group: "场景（从高到低）", tag: "场景", lines: c.lines }));
-  return CODEX.statuses.map((c) => ({ key: "s:" + c.name, name: c.name, py: "", group: c.good ? "好状态" : "不良状态", tag: c.good ? "好状态" : "不良状态", lines: [["text", c.text]] }))
+  return CODEX.statuses.slice().sort((a, b) => Number(!!a.good) - Number(!!b.good)).map((c) => ({ key: "s:" + c.name, name: c.name, py: "", group: c.good ? "好状态" : "不良状态", tag: c.good ? "好状态" : "不良状态", lines: [["text", c.text]] }))
     .concat(CODEX.parasites.map((c) => ({ key: "p:" + c.name, name: c.name, py: "", group: "虫子", tag: "虫子", lines: [["text", c.text]] })));
+}
+// 图鉴里的一张招式卡：和对战时的技能卡一个样子。第一行是威力，没有威力的招写它的特效；第二行是用哪个防御能防住。
+function codexCardHtml(it, on) {
+  const s = it.skill;
+  let row1 = mvRow("威力", s.damage ? wan(s.damage) : "—");
+  if (!s.damage) {
+    for (const [style, text] of s.lines) {
+      const m = style === "text" && /【(.+?)】(\d+) 回合/.exec(text);
+      if (m) { row1 = mvRow("特效", `${esc(m[1])} ${m[2]} 回合`); break; }
+    }
+  }
+  const row2 = mvRow("防御", s.defense != null ? defenseName(s.defense) : s.damage ? "防不住" : "—");
+  const [style, glyph] = badgeLook(s.kind === "神技" ? ["神技"] : (s.attributes || []), s.kind) || ["", "防"];
+  const badge = s.kind === "防御" ? badgeHtml({ id: { 防御1: "d1", 防御2: "d2", 防御3: "d3", 防御4: "d4", 平面镜: "dj", 憋神技: "ds" }[s.name], action_kind: "defense", attributes: [] })
+    : `<span class="badge"${style ? ` style="${style}"` : ""}>${glyph}</span>`;
+  return cardShell(on ? "picked" : "", `data-cx="${esc(it.key)}" aria-pressed="${on}"`, `<span class="mvname">${esc(it.name)}</span>${badge}${row1}${row2}`);
 }
 function codexHtml() {
   let items = codexItems(cx.tab);
+  if (cx.tab === "招式" && cx.kind !== "全部") items = items.filter((it) => it.group === cx.kind);
   if (cx.q) items = items.map((it) => [searchRank(it.name, it.py, cx.q), it]).filter(([r]) => r >= 0).sort((a, b) => a[0] - b[0]).map(([, it]) => it);
   const picked = items.find((it) => it.key === cx.key) || items[0];
-  let last = null;
-  const list = items.map((it) => {
-    const head = !cx.q && it.group !== last ? `<div class="grp">${esc(it.group)}</div>` : "";
-    last = it.group;
-    return `${head}<button data-cx="${esc(it.key)}" aria-pressed="${picked && it.key === picked.key}">${it.color ? `<i class="dotc" style="background:${it.color}"></i>` : ""}${esc(it.name)}</button>`;
-  }).join("") || `<span class="muted">没有搜到。</span>`;
-  const detail = picked ? `<div class="cxname">${esc(picked.name)} <small>（${esc(picked.tag)}）</small></div><div class="dtext">${tipLines(picked.lines)}</div>` : "";
-  return `<div class="dcol"><div class="dtabs">${CODEX_TABS.map((t) => `<button data-cxtab="${t}" aria-pressed="${t === cx.tab}">${t}</button>`).join("")}</div>
-      <div class="cxtools"><input type="text" id="cxq" placeholder="搜名字或拼音首字母" value="${esc(cx.q)}" autocomplete="off" spellcheck="false" aria-label="在图鉴里搜"></div>
-      <div class="cxlist">${list}</div></div>
-    <div class="dcol">${detail}</div>`;
+  const on = (it) => !!picked && it.key === picked.key;
+  // 左边的格子：招式是技能卡；人物是方头像加名字条；别的是只写名字的小卡。不搜的时候按类分开写小标题。
+  let last = null, cls = "";
+  const head = (it) => { const h = !cx.q && cx.tab !== "招式" && it.group !== last ? `<div class="grp">${esc(it.group)}</div>` : ""; last = it.group; return h; };
+  const cell = (it) => {
+    if (cx.tab === "招式") return codexCardHtml(it, on(it));
+    if (cx.tab === "人物") {
+      return `<button class="pc" data-cx="${esc(it.key)}" aria-pressed="${on(it)}"><span class="art">${ART.has(it.name) ? `<img alt="" src="assets/characters/${encodeURIComponent(it.name)}.png">` : esc(it.name.slice(0, 1))}</span><span class="pn">${esc(it.name)}</span></button>`;
+    }
+    return cardShell(`plain ${on(it) ? "picked" : ""}`, `data-cx="${esc(it.key)}" aria-pressed="${on(it)}"`, `<span class="mvname">${esc(it.name)}</span><small>${esc(it.tag)}</small>`);
+  };
+  if (cx.tab === "人物") cls = "people";
+  const grid = items.map((it) => head(it) + cell(it)).join("") || `<span class="muted">没有搜到。</span>`;
+  const chips = picked ? (picked.skill ? chipHtml(picked.skill.kind) + chipHtml(picked.tag, "inner") : chipHtml(picked.group)) : "";
+  const detail = picked ? `<div class="cxhead"><b class="cxname">${esc(picked.name)}</b>${chips}</div><div class="dtext scroll">${tipLines(picked.lines)}</div>`
+    : `<div class="cxhead"><b class="cxname">没有搜到</b></div>`;
+  const kinds = cx.tab === "招式" ? CODEX_KINDS.map((k) => `<button class="pill" data-cxkind="${k}" aria-pressed="${k === cx.kind}">${k}</button>`).join("") : "";
+  return `<div class="cxtabs">${CODEX_TABS.map((t) => `<button class="wtab" data-cxtab="${t}" aria-pressed="${t === cx.tab}">${t}</button>`).join("")}</div>
+    <div class="cxtools"><input class="field" type="text" id="cxq" placeholder="搜名字，可打拼音首字母" value="${esc(cx.q)}" autocomplete="off" spellcheck="false" aria-label="搜图鉴">${kinds}</div>
+    <div class="cxgrid scroll ${cls}">${grid}</div>
+    <div class="cxdetail">${detail}</div>`;
 }
 function openCodex() {
   if (!CODEX) return toast("图鉴的文字还没读到，稍等一下再点。");
-  const m = openModal("图鉴", codexHtml(), "cx"), body = $(".dbody", m);
-  const redraw = (focus) => { body.innerHTML = codexHtml(); if (focus) { const q = $("#cxq", m); q.focus(); q.setSelectionRange(q.value.length, q.value.length); } };
+  const m = openModal("图鉴", codexHtml(), "cwin"), body = $(".wbody", m);
+  // 点一张卡只换右边的说明：左边的格子滚到哪儿还停在哪儿
+  const redraw = (focus, keep) => {
+    const top = keep && $(".cxgrid", m) ? $(".cxgrid", m).scrollTop : 0;
+    body.innerHTML = codexHtml();
+    if (keep) $(".cxgrid", m).scrollTop = top;
+    if (focus) { const q = $("#cxq", m); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
+  };
   body.addEventListener("click", (ev) => {
     const b = ev.target.closest("button"); if (!b) return;
-    if (b.dataset.cxtab) { cx.tab = b.dataset.cxtab; cx.key = null; cx.q = ""; redraw(); }
-    else if (b.dataset.cx) { cx.key = b.dataset.cx; redraw(); }
+    if (b.dataset.cxtab) { cx.tab = b.dataset.cxtab; cx.key = null; cx.q = ""; cx.kind = "全部"; redraw(); }
+    else if (b.dataset.cxkind) { cx.kind = b.dataset.cxkind; cx.key = null; redraw(); }
+    else if (b.dataset.cx) { cx.key = b.dataset.cx; redraw(false, true); }
   });
   body.addEventListener("input", (ev) => { if (ev.target.id === "cxq") { cx.q = ev.target.value.trim(); cx.key = null; redraw(true); } });
   $("#cxq", m).focus();
